@@ -16,6 +16,7 @@
  */
 
 #include "WorldSession.h"
+#include "Playerbot/PlayerbotHooks.h"
 #include "AccountMgr.h"
 #include "ArenaTeam.h"
 #include "ArenaTeamMgr.h"
@@ -47,6 +48,7 @@
 #include "Language.h"
 #include "Log.h"
 #include "Mail.h"
+#include "LoginQueryHolder.h"
 #include "Map.h"
 #include "MapUtils.h"
 #include "Metric.h"
@@ -71,18 +73,9 @@
 #include <boost/circular_buffer.hpp>
 #include <sstream>
 
-class LoginQueryHolder : public CharacterDatabaseQueryHolder
-{
-    private:
-        uint32 m_accountId;
-        ObjectGuid m_guid;
-    public:
-        LoginQueryHolder(uint32 accountId, ObjectGuid guid)
-            : m_accountId(accountId), m_guid(guid) { }
-        ObjectGuid GetGuid() const { return m_guid; }
-        uint32 GetAccountId() const { return m_accountId; }
-        bool Initialize();
-};
+// LoginQueryHolder declaration moved to Handlers/LoginQueryHolder.h so the
+// V2 playerbot module can build/submit the same holder for headless bot
+// logins. The Initialize() body still lives here (~250 prepared statements).
 
 bool LoginQueryHolder::Initialize()
 {
@@ -554,6 +547,10 @@ void WorldSession::HandleCharEnum(CharacterDatabaseQueryHolder const& holder)
     }
 
     SendPacket(charEnum.Write());
+
+    // Classic 1.60: the official server sends the distribution list (boost / character service tokens) unasked with the character
+    // list; the client only asks for it when the Shop opens
+    SendShopDistributionList();
 
     if (!realmCharacters.empty())
         charEnum.Characters = std::move(realmCharacters);
@@ -1541,9 +1538,19 @@ void WorldSession::HandlePlayerLogin(LoginQueryHolder const& holder)
     stmt->setUInt64(0, pCurrChar->GetGUID().GetCounter());
     CharacterDatabase.Execute(stmt);
 
-    LoginDatabasePreparedStatement* loginStmt = LoginDatabase.GetPreparedStatement(LOGIN_UPD_ACCOUNT_ONLINE);
-    loginStmt->setUInt32(0, GetAccountId());
-    LoginDatabase.Execute(loginStmt);
+#if defined(TRINITY_PLAYERBOT_V2)
+    // Bot sessions share the owner's account id. Setting account.online=1
+    // here would (in auto-resume mode where the GM is offline) block them
+    // from later logging into their own account — the login server treats
+    // online=1 as "another session active". The character.online flag above
+    // is per-character and correctly reflects the bot's in-world state.
+    if (!IsBot())
+#endif
+    {
+        LoginDatabasePreparedStatement* loginStmt = LoginDatabase.GetPreparedStatement(LOGIN_UPD_ACCOUNT_ONLINE);
+        loginStmt->setUInt32(0, GetAccountId());
+        LoginDatabase.Execute(loginStmt);
+    }
 
     pCurrChar->SetInGameTime(GameTime::GetGameTimeMS());
 
@@ -1729,6 +1736,8 @@ void WorldSession::HandlePlayerLogin(LoginQueryHolder const& holder)
 
     sScriptMgr->OnPlayerLogin(pCurrChar, firstLogin);
 
+    Playerbot::Hooks::OnPlayerLogin(pCurrChar);
+
     // Battle.net presence: the client takes the account's BattleTag from it (Social window, Battle.net friends); online friends are told
     BattlenetPresence::OnLogin(this);
 
@@ -1826,74 +1835,93 @@ void WorldSession::SendFeatureSystemStatus()
     features.GroupChatThrottle.TriesRestoredPerSecond = 20;
 
     // Classic 1.60: every flag as the official server sends it (sniffs 70205 and 70235 are identical). Field names follow the
-    // retail order, which is not the Classic meaning of each bit. Classic.OfficialFeatureFlags = 0 goes back to the values above.
-    if (sConfigMgr->GetBoolDefault("Classic.OfficialFeatureFlags", true))
+    // retail order, which is not the Classic meaning of each bit.
+    features.VoiceEnabled = true;
+    features.BpayStoreAvailable = true;
+    features.ItemRestorationButtonEnabled = false;
+    features.SessionAlert.reset();
+    features.RAFSystem.Enabled = false;
+    features.RAFSystem.RecruitingEnabled = false;
+    features.CharUndeleteEnabled = true;
+    features.RestrictedAccount = false;
+    features.CommerceServerEnabled = false;
+    features.TutorialEnabled = true;
+    features.VeteranTokenRedeemWillKick = true;
+    features.WorldTokenRedeemWillKick = false;
+    features.KioskModeEnabled = false;
+    features.CompetitiveModeEnabled = true;
+    features.RedeemForBalanceAvailable = true;
+    features.WarModeEnabled = true;
+    features.CommunitiesEnabled = true;
+    features.BnetGroupsEnabled = true;
+    features.CharacterCommunitiesEnabled = false;
+    features.ClubPresenceAllowSubscribeAll = false;
+    features.VoiceChatParentalDisabled = true;
+    features.VoiceChatParentalMuted = false;
+    features.QuestSessionEnabled = false;
+    features.ClubFinderEnabled = true;
+    features.CommunityFinderEnabled = true;
+    features.BrowserCrashReporterEnabled = false;
+    features.SpeakForMeAllowed = false;
+    // official sends this bit on; in Classic it is the group finder "attach an Authenticator and SMS Protect" requirement
+    // (official accounts there were secured). Off until accounts can have an authenticator here.
+    features.DoesAccountNeedAADCPrompt = false;
+    features.IsAccountOptedInToAADC = false;
+    features.LfgRequireAuthenticatorEnabled = false;
+    features.ScriptsDisallowedForBeta = false;
+    features.TimerunningEnabled = true;
+    features.PlayerIdentityOptionsEnabled = false;
+    features.IsPlayerContentTrackingEnabled = false;
+    features.LfdEnabled = true;
+    features.LfrEnabled = false;
+    features.PetHappinessEnabled = false;
+    features.ClassicFlagsAfterLength = 2;
+    features.IsAccountCurrencyTransferEnabled = false;
+    features.NetEaseChatTelemetryEnabled = false;
+    features.LobbyMatchmakerQueueFromMainlineEnabled = true;
+    features.CanSendLobbyMatchmakerPartyCustomizations = false;
+    features.AddonProfilingEnabled = false;
+    features.GlobalUserGeneratedContentMuteEnabled = false;
+    features.AccountUserGeneratedContentIsRisky = false;
+    features.FriendsDisabled = false;
+
+    features.EuropaTicketSystemStatus->TicketsEnabled = false;
+    features.EuropaTicketSystemStatus->BugsEnabled = true;
+    features.EuropaTicketSystemStatus->ComplaintsEnabled = true;
+    features.EuropaTicketSystemStatus->SuggestionsEnabled = true;
+    features.EuropaTicketSystemStatus->ThrottleState = { .MaxTries = 10, .PerMilliseconds = 60000, .TryCount = 0, .LastResetTimeBeforeNow = 130929 };
+    features.EuropaTicketSystemStatus->ExpensiveThrottleState = { .MaxTries = 1, .PerMilliseconds = 60000, .TryCount = 0, .LastResetTimeBeforeNow = 130929 };
+
+    features.QuickJoinConfig = { false, 7.0f, 10.0f, 1.0f, 1.0f, 5.0f, 1.0f, 0.0f, 60.0f, 20.0f, 0.0f, 50.0f, 1.0f, 10.0f, 50.0f, 100.0f,
+        50.0f, 1.0f, 1.0f, 100.0f, 1.0f, 850.0f, 80.0f };
+    features.RemainingTimerunningSeasonSeconds = 32767;
+    features.MaxPlayerGuidLookupsPerRequest = 32;
+    features.NameLookupTelemetryInterval = 32;
+    features.DisabledGameModes = { { .GameMode = 3, .ContentSetID = 13, .GameModeRecordID = 0 }, { .GameMode = 2, .ContentSetID = 5, .GameModeRecordID = 0 } };
+
+    // Classic 1.60 diagnostics: each chat/social related field can be overridden from the config without a rebuild (read at every
+    // login, so ".reload config" plus a relog is enough). Unset keys keep the value chosen above. Used to find which field makes
+    // the 70291 client drop its own /w handler (Classic.Feature.* in worldserver.conf.d, see doc/whisper-feature-bisect.md).
+    auto overrideBool = [](char const* key, bool& field)
     {
-        features.VoiceEnabled = true;
-        features.BpayStoreAvailable = true;
-        features.ItemRestorationButtonEnabled = false;
-        features.SessionAlert.reset();
-        features.RAFSystem.Enabled = false;
-        features.RAFSystem.RecruitingEnabled = false;
-        features.CharUndeleteEnabled = true;
-        features.RestrictedAccount = false;
-        features.CommerceServerEnabled = false;
-        features.TutorialEnabled = true;
-        features.VeteranTokenRedeemWillKick = true;
-        features.WorldTokenRedeemWillKick = false;
-        features.KioskModeEnabled = false;
-        features.CompetitiveModeEnabled = true;
-        features.RedeemForBalanceAvailable = true;
-        features.WarModeEnabled = true;
-        features.CommunitiesEnabled = true;
-        features.BnetGroupsEnabled = true;
-        features.CharacterCommunitiesEnabled = false;
-        features.ClubPresenceAllowSubscribeAll = false;
-        features.VoiceChatParentalDisabled = true;
-        features.VoiceChatParentalMuted = false;
-        features.QuestSessionEnabled = false;
-        features.ClubFinderEnabled = true;
-        features.CommunityFinderEnabled = true;
-        features.BrowserCrashReporterEnabled = false;
-        features.SpeakForMeAllowed = false;
-        // official sends this bit on; in Classic it is the group finder "attach an Authenticator and SMS Protect" requirement
-        // (official accounts there were secured). Off until accounts can have an authenticator here.
-        features.DoesAccountNeedAADCPrompt = false;
-        features.IsAccountOptedInToAADC = false;
-        features.LfgRequireAuthenticatorEnabled = false;
-        features.ScriptsDisallowedForBeta = false;
-        features.TimerunningEnabled = true;
-        features.PlayerIdentityOptionsEnabled = false;
-        features.IsPlayerContentTrackingEnabled = false;
-        features.LfdEnabled = true;
-        features.LfrEnabled = false;
-        features.PetHappinessEnabled = false;
-        features.GuildEventsEditsEnabled = false;
-        features.GuildTradeSkillsEnabled = false;
-        features.ClassicFlagBits10 = 2;
-        features.IsAccountCurrencyTransferEnabled = false;
-        features.NetEaseChatTelemetryEnabled = false;
-        features.LobbyMatchmakerQueueFromMainlineEnabled = true;
-        features.CanSendLobbyMatchmakerPartyCustomizations = false;
-        features.AddonProfilingEnabled = false;
-        features.GlobalUserGeneratedContentMuteEnabled = false;
-        features.AccountUserGeneratedContentIsRisky = false;
-        features.FriendsDisabled = false;
-
-        features.EuropaTicketSystemStatus->TicketsEnabled = false;
-        features.EuropaTicketSystemStatus->BugsEnabled = true;
-        features.EuropaTicketSystemStatus->ComplaintsEnabled = true;
-        features.EuropaTicketSystemStatus->SuggestionsEnabled = true;
-        features.EuropaTicketSystemStatus->ThrottleState = { .MaxTries = 10, .PerMilliseconds = 60000, .TryCount = 0, .LastResetTimeBeforeNow = 130929 };
-        features.EuropaTicketSystemStatus->ExpensiveThrottleState = { .MaxTries = 1, .PerMilliseconds = 60000, .TryCount = 0, .LastResetTimeBeforeNow = 130929 };
-
-        features.QuickJoinConfig = { false, 7.0f, 10.0f, 1.0f, 1.0f, 5.0f, 1.0f, 0.0f, 60.0f, 20.0f, 0.0f, 50.0f, 1.0f, 10.0f, 50.0f, 100.0f,
-            50.0f, 1.0f, 1.0f, 100.0f, 1.0f, 850.0f, 80.0f };
-        features.RemainingTimerunningSeasonSeconds = 32767;
-        features.MaxPlayerGuidLookupsPerRequest = 32;
-        features.NameLookupTelemetryInterval = 32;
-        features.DisabledGameModes = { { .GameMode = 3, .ContentSetID = 13, .GameModeRecordID = 0 }, { .GameMode = 2, .ContentSetID = 5, .GameModeRecordID = 0 } };
-    }
+        field = sConfigMgr->GetBoolDefault(key, field);
+    };
+    overrideBool("Classic.Feature.VoiceEnabled", features.VoiceEnabled);
+    overrideBool("Classic.Feature.VoiceChatParentalDisabled", features.VoiceChatParentalDisabled);
+    overrideBool("Classic.Feature.VoiceChatParentalMuted", features.VoiceChatParentalMuted);
+    overrideBool("Classic.Feature.SpeakForMeAllowed", features.SpeakForMeAllowed);
+    overrideBool("Classic.Feature.NetEaseChatTelemetryEnabled", features.NetEaseChatTelemetryEnabled);
+    overrideBool("Classic.Feature.GlobalUserGeneratedContentMuteEnabled", features.GlobalUserGeneratedContentMuteEnabled);
+    overrideBool("Classic.Feature.AccountUserGeneratedContentIsRisky", features.AccountUserGeneratedContentIsRisky);
+    overrideBool("Classic.Feature.FriendsDisabled", features.FriendsDisabled);
+    overrideBool("Classic.Feature.DoesAccountNeedAADCPrompt", features.DoesAccountNeedAADCPrompt);
+    overrideBool("Classic.Feature.IsAccountOptedInToAADC", features.IsAccountOptedInToAADC);
+    features.SocialRestriction = sConfigMgr->GetIntDefault("Classic.Feature.SocialRestriction", features.SocialRestriction);
+    TC_LOG_INFO("playerbot.v2", "[feature_status] VoiceEnabled={} VoiceParentalDisabled={} VoiceParentalMuted={} SpeakForMe={} NetEaseChat={} GlobalUGCMute={} UGCRisky={} FriendsDisabled={} AADCPrompt={} AADCOptIn={} SocialRestriction={} ChatMuted={}",
+        features.VoiceEnabled, features.VoiceChatParentalDisabled, features.VoiceChatParentalMuted, features.SpeakForMeAllowed,
+        features.NetEaseChatTelemetryEnabled, features.GlobalUserGeneratedContentMuteEnabled, features.AccountUserGeneratedContentIsRisky,
+        features.FriendsDisabled, features.DoesAccountNeedAADCPrompt, features.IsAccountOptedInToAADC,
+        features.SocialRestriction, features.IsChatMuted);
 
     SendPacket(features.Write());
 }
@@ -2018,6 +2046,7 @@ void WorldSession::HandleCharRenameOpcode(WorldPackets::Character::CharacterRena
     CharacterDatabasePreparedStatement* stmt = CharacterDatabase.GetPreparedStatement(CHAR_SEL_FREE_NAME);
     stmt->setUInt64(0, request.RenameInfo->Guid.GetCounter());
     stmt->setString(1, request.RenameInfo->NewName);
+    stmt->setUInt64(2, request.RenameInfo->Guid.GetCounter());    // Classic 1.60: keeping the name and changing only the surname is allowed
 
     _queryProcessor.AddCallback(CharacterDatabase.AsyncQuery(stmt)
         .WithPreparedCallback([this, renameInfo = std::move(request.RenameInfo)](PreparedQueryResult result) mutable
@@ -2064,14 +2093,22 @@ void WorldSession::HandleCharRenameCallBack(std::shared_ptr<WorldPackets::Charac
 
     trans->Append(stmt);
 
+    // Classic 1.60: the rename dialog also sets the surname (up to 48 characters, like character creation)
+    if (utf8length(renameInfo->NewSurname) > 48)
+        renameInfo->NewSurname.clear();
+    std::string escapedSurname = renameInfo->NewSurname;
+    CharacterDatabase.EscapeString(escapedSurname);
+    trans->Append(Trinity::StringFormat("UPDATE characters SET surname = '{}' WHERE guid = {}", escapedSurname, lowGuid).c_str());
+
     CharacterDatabase.CommitTransaction(trans);
 
-    TC_LOG_INFO("entities.player.character", "Account: {} (IP: {}) Character:[{}] ({}) Changed name to: {}",
-        GetAccountId(), GetRemoteAddress(), oldName, renameInfo->Guid.ToString(), renameInfo->NewName);
+    TC_LOG_INFO("entities.player.character", "Account: {} (IP: {}) Character:[{}] ({}) Changed name to: {} {}",
+        GetAccountId(), GetRemoteAddress(), oldName, renameInfo->Guid.ToString(), renameInfo->NewName, renameInfo->NewSurname);
 
     SendCharRename(RESPONSE_SUCCESS, renameInfo.get());
 
     sCharacterCache->UpdateCharacterData(renameInfo->Guid, renameInfo->NewName);
+    sCharacterCache->UpdateCharacterSurname(renameInfo->Guid, renameInfo->NewSurname);
 }
 
 void WorldSession::HandleSetPlayerDeclinedNames(WorldPackets::Character::SetPlayerDeclinedNames& packet)
@@ -2310,11 +2347,19 @@ void WorldSession::HandleCharCustomizeCallback(std::shared_ptr<WorldPackets::Cha
         stmt->setUInt64(0, lowGuid);
 
         trans->Append(stmt);
+
+        // Classic 1.60: the surname is edited in the same screen (up to 48 characters, like character creation)
+        if (utf8length(customizeInfo->CharSurname) > 48)
+            customizeInfo->CharSurname.clear();
+        std::string escapedSurname = customizeInfo->CharSurname;
+        CharacterDatabase.EscapeString(escapedSurname);
+        trans->Append(Trinity::StringFormat("UPDATE characters SET surname = '{}' WHERE guid = {}", escapedSurname, lowGuid).c_str());
     }
 
     CharacterDatabase.CommitTransaction(trans);
 
     sCharacterCache->UpdateCharacterData(customizeInfo->CharGUID, customizeInfo->CharName, customizeInfo->SexID);
+    sCharacterCache->UpdateCharacterSurname(customizeInfo->CharGUID, customizeInfo->CharSurname);
 
     SendCharCustomize(RESPONSE_SUCCESS, customizeInfo.get());
 
@@ -2642,6 +2687,13 @@ void WorldSession::HandleCharRaceOrFactionChangeCallback(std::shared_ptr<WorldPa
         stmt->setUInt64(0, lowGuid);
 
         trans->Append(stmt);
+
+        // Classic 1.60: the surname is edited in the same screen (up to 48 characters, like character creation)
+        if (utf8length(factionChangeInfo->Surname) > 48)
+            factionChangeInfo->Surname.clear();
+        std::string escapedSurname = factionChangeInfo->Surname;
+        CharacterDatabase.EscapeString(escapedSurname);
+        trans->Append(Trinity::StringFormat("UPDATE characters SET surname = '{}' WHERE guid = {}", escapedSurname, lowGuid).c_str());
     }
 
     // Customize
@@ -2657,7 +2709,6 @@ void WorldSession::HandleCharRaceOrFactionChangeCallback(std::shared_ptr<WorldPa
         trans->Append(stmt);
     }
 
-    sCharacterCache->UpdateCharacterData(factionChangeInfo->Guid, factionChangeInfo->Name, factionChangeInfo->SexID, factionChangeInfo->RaceID);
 
     if (oldRace != factionChangeInfo->RaceID)
     {
@@ -2746,6 +2797,10 @@ void WorldSession::HandleCharRaceOrFactionChangeCallback(std::shared_ptr<WorldPa
                 case RACE_HARANIR_ALLIANCE:
                 case RACE_HARANIR_HORDE:
                     stmt->setUInt16(1, 2987);
+                    break;
+                case RACE_SKYBORNE_ALLIANCE:    // Classic 1.60: both Skyborne know Darnassian (skill 113) from creation
+                case RACE_SKYBORNE_HORDE:
+                    stmt->setUInt16(1, 113);
                     break;
                 default:
                     TC_LOG_ERROR("entities.player", "Could not find language data for race ({}).", factionChangeInfo->RaceID);
@@ -3044,6 +3099,11 @@ void WorldSession::HandleCharRaceOrFactionChangeCallback(std::shared_ptr<WorldPa
 
     CharacterDatabase.CommitTransaction(trans);
 
+    // update the cache only when the change is saved: a failed attempt left the new race cached, so every retry was
+    // checked against the wrong faction
+    sCharacterCache->UpdateCharacterData(factionChangeInfo->Guid, factionChangeInfo->Name, factionChangeInfo->SexID, factionChangeInfo->RaceID);
+    sCharacterCache->UpdateCharacterSurname(factionChangeInfo->Guid, factionChangeInfo->Surname);
+
     TC_LOG_DEBUG("entities.player", "{} (IP: {}) changed race from {} to {}", GetPlayerInfo(), GetRemoteAddress(), oldRace, factionChangeInfo->RaceID);
 
     SendCharFactionChange(RESPONSE_SUCCESS, factionChangeInfo.get());
@@ -3271,6 +3331,7 @@ void WorldSession::SendCharRename(ResponseCodes result, WorldPackets::Character:
     WorldPackets::Character::CharacterRenameResult packet;
     packet.Result = result;
     packet.Name = renameInfo->NewName;
+    packet.Surname = renameInfo->NewSurname;
     if (result == RESPONSE_SUCCESS)
         packet.Guid = renameInfo->Guid;
 
@@ -3303,6 +3364,7 @@ void WorldSession::SendCharFactionChange(ResponseCodes result, WorldPackets::Cha
     {
         packet.Display.emplace();
         packet.Display->Name = factionChangeInfo->Name;
+        packet.Display->Surname = factionChangeInfo->Surname;
         packet.Display->SexID = factionChangeInfo->SexID;
         packet.Display->Customizations = &factionChangeInfo->Customizations;
         packet.Display->RaceID = factionChangeInfo->RaceID;

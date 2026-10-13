@@ -219,10 +219,11 @@ WorldPacket const* FeatureSystemStatus::Write()
     _worldPacket << Bits<1>(LfdEnabled);
     _worldPacket << Bits<1>(LfrEnabled);
     _worldPacket << Bits<1>(PetHappinessEnabled);
-    _worldPacket << Bits<1>(GuildEventsEditsEnabled);
-
-    _worldPacket << Bits<1>(GuildTradeSkillsEnabled);
-    _worldPacket << Bits<10>(ClassicFlagBits10);
+    // Classic 1.60.1.70291 (client reader rva 0x7FF4A0): the bit run is 7 flags, a 10 bit string length (client 0x198; the string follows the
+    // optional blocks), 7 flags, 1 flag. The length is always 0: we never send the string, and a non-zero length makes the client read past
+    // the packet. (The retail layout has two guild flags where this length starts; the Classic client has no such fields.)
+    _worldPacket << Bits<10>(0);
+    _worldPacket << Bits<2>(ClassicFlagsAfterLength);
     _worldPacket << Bits<1>(IsAccountCurrencyTransferEnabled);
     _worldPacket << Bits<1>(NetEaseChatTelemetryEnabled);
     _worldPacket << Bits<1>(LobbyMatchmakerQueueFromMainlineEnabled);
@@ -249,7 +250,13 @@ WorldPacket const* FeatureSystemStatusGlueScreen::Write()
     // WoW Classic 1.60.1.70009 layout, from the client's reader (0x7F9E70): 6 bytes of flags (their order differs from retail and is not
     // mapped yet, so all flags are sent as off), no KioskSessionDurationMinutes, array elements directly after the counts.
     // Retail flags misread by the Classic client enabled the Timerunning (Remix) UI and disabled character creation.
-    for (int32 i = 0; i < 6; ++i)
+    // Bit 0 (MSB of the first byte) is BpayStoreAvailable like retail: the glue handler (70058 0x23e2be0) copies it to the
+    // byte C_StoreSecure.IsAvailable() returns, so without it the Store says "unavailable" at character select.
+    // Not set: in the 70058 decoder bit 41 (byte 5, 0x40; message +0x169) is C_RealmList.ShouldShowRealmsAsCheatButton() (the nav
+    // bar's Realms button that CharacterSelectNavBar.lua:391 expects during a character service flow), but on 70338 0x40 showed no
+    // button and crashed the client at the next realm login: ASSERTSAFE(isRuleActive) in PremadeGroupFinderStyleUtils.cpp:23.
+    _worldPacket << uint8(BpayStoreAvailable ? 0x80 : 0x00);
+    for (int32 i = 1; i < 6; ++i)
         _worldPacket << uint8(0);
 
     _worldPacket << uint32(CommercePricePollTimeSeconds);

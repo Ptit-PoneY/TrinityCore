@@ -163,6 +163,15 @@ bool normalizePlayerName(std::string& name)
     if (!Utf8toWStr(name, tmp))
         return false;
 
+    // The Classic client's unit menu passes "Name " (name + empty surname) to invite/whisper/ignore/friend: trim surrounding
+    // blanks so every name lookup that normalizes first finds the player.
+    // (plain, non-breaking and zero-width blanks)
+    static wchar_t const* const blanks = L" \t\u00A0\u200B\u200C\u200D\u200E\u200F\uFEFF";
+    std::wstring::size_type first = tmp.find_first_not_of(blanks);
+    if (first == std::wstring::npos)
+        return false;
+    tmp = tmp.substr(first, tmp.find_last_not_of(blanks) - first + 1);
+
     wstrToLower(tmp);
     if (!tmp.empty())
         tmp[0] = wcharToUpper(tmp[0]);
@@ -686,6 +695,44 @@ ClassicCreatureStats const* ObjectMgr::GetCreatureClassicStats(uint32 entry) con
     return Trinity::Containers::MapGetValuePtr(_creatureClassicStatsStore, entry);
 }
 
+// Classic 1.60: vanilla melee hit and swing time of every creature (imported from VMaNGOS)
+void ObjectMgr::LoadCreatureClassicMelee()
+{
+    uint32 oldMSTime = getMSTime();
+
+    _creatureClassicMeleeStore.clear();
+
+    //                                               0      1         2         3          4
+    QueryResult result = WorldDatabase.Query("SELECT entry, dmg_min, dmg_max, attack_ms, ranged_attack_ms FROM creature_classic_melee");
+    if (!result)
+    {
+        TC_LOG_INFO("server.loading", ">> Loaded 0 classic creature melee rows. DB table `creature_classic_melee` is empty.");
+        return;
+    }
+
+    do
+    {
+        Field* fields = result->Fetch();
+        uint32 entry = fields[0].GetUInt32();
+        if (!GetCreatureTemplate(entry))
+            continue;
+
+        CreatureClassicMelee melee;
+        melee.DamageMin = fields[1].GetFloat();
+        melee.DamageMax = std::max(fields[2].GetFloat(), melee.DamageMin);
+        melee.AttackMs = fields[3].GetUInt32();
+        melee.RangedAttackMs = fields[4].GetUInt32();
+        _creatureClassicMeleeStore[entry] = melee;
+    } while (result->NextRow());
+
+    TC_LOG_INFO("server.loading", ">> Loaded {} classic creature melee rows in {} ms", _creatureClassicMeleeStore.size(), GetMSTimeDiffToNow(oldMSTime));
+}
+
+ObjectMgr::CreatureClassicMelee const* ObjectMgr::GetCreatureClassicMelee(uint32 entry) const
+{
+    return Trinity::Containers::MapGetValuePtr(_creatureClassicMeleeStore, entry);
+}
+
 ClassicCreatureClassLevelStats const* ObjectMgr::GetCreatureClassicClassLevelStats(uint8 level, uint8 unitClass) const
 {
     return Trinity::Containers::MapGetValuePtr(_creatureClassicClassLevelStatsStore, MAKE_PAIR16(level, unitClass));
@@ -719,6 +766,133 @@ uint32 ObjectMgr::GetItemClassicBlock(uint32 entry) const
 {
     uint32 const* block = Trinity::Containers::MapGetValuePtr(_itemClassicBlockStore, entry);
     return block ? *block : 0;
+}
+
+void ObjectMgr::LoadShop()
+{
+    uint32 oldMSTime = getMSTime();
+
+    _shopGroupStore.clear();
+    _shopProductStore.clear();
+
+    //                                               0   1     2               3
+    if (QueryResult result = WorldDatabase.Query("SELECT ID, Name, IconFileDataID, Ordering FROM shop_group"))
+    {
+        do
+        {
+            Field* fields = result->Fetch();
+            ShopGroup& group = _shopGroupStore[fields[0].GetUInt32()];
+            group.ID = fields[0].GetUInt32();
+            group.Name = fields[1].GetString();
+            group.IconFileDataID = fields[2].GetInt32();
+            group.Ordering = fields[3].GetInt32();
+        } while (result->NextRow());
+    }
+
+    //                                               0   1        2     3            4               5      6            7
+    if (QueryResult result = WorldDatabase.Query("SELECT ID, GroupID, Name, Description, IconFileDataID, Price, NormalPrice, Ordering FROM shop_product WHERE Enabled = 1"))
+    {
+        do
+        {
+            Field* fields = result->Fetch();
+            uint32 id = fields[0].GetUInt32();
+            uint32 groupId = fields[1].GetUInt32();
+            if (!_shopGroupStore.contains(groupId))
+            {
+                TC_LOG_ERROR("sql.sql", "Table `shop_product`: product {} has non-existing GroupID {}, skipped.", id, groupId);
+                continue;
+            }
+
+            ShopProduct& product = _shopProductStore[id];
+            product.ID = id;
+            product.GroupID = groupId;
+            product.Name = fields[2].GetString();
+            product.Description = fields[3].GetString();
+            if (product.Description.size() > 8191)     // 13 bit length in the packet
+                product.Description.resize(8191);
+            product.IconFileDataID = fields[4].GetInt32();
+            product.Price = fields[5].GetUInt32();
+            product.NormalPrice = fields[6].GetUInt32();
+            product.Ordering = fields[7].GetInt32();
+        } while (result->NextRow());
+    }
+
+    //                                               0          1       2       3
+    if (QueryResult result = WorldDatabase.Query("SELECT ProductID, Action, Param1, Param2 FROM shop_product_action ORDER BY ProductID, `Index`"))
+    {
+        do
+        {
+            Field* fields = result->Fetch();
+            uint32 productId = fields[0].GetUInt32();
+            ShopProduct* product = Trinity::Containers::MapGetValuePtr(_shopProductStore, productId);
+            if (!product)
+                continue;
+
+            ShopProductAction action;
+            action.Action = ShopAction(fields[1].GetUInt8());
+            action.Param1 = fields[2].GetInt32();
+            action.Param2 = fields[3].GetInt32();
+
+            bool valid = true;
+            switch (action.Action)
+            {
+                case ShopAction::Item:
+                    valid = GetItemTemplate(action.Param1) != nullptr;
+                    action.Param2 = std::max(action.Param2, 1);
+                    break;
+                case ShopAction::Gold:
+                    valid = action.Param1 > 0;
+                    break;
+                case ShopAction::Spell:
+                    valid = sSpellMgr->GetSpellInfo(action.Param1, DIFFICULTY_NONE) != nullptr;
+                    break;
+                case ShopAction::Service:
+                    valid = action.Param1 >= AsUnderlyingType(ShopService::Rename) && action.Param1 <= AsUnderlyingType(ShopService::FactionChange);
+                    break;
+                case ShopAction::Profession:
+                    valid = sSkillLineStore.LookupEntry(action.Param1) != nullptr;
+                    if (action.Param2 <= 0)
+                        action.Param2 = 300;
+                    break;
+                case ShopAction::Level:
+                    valid = action.Param1 > 1 && action.Param1 <= STRONG_MAX_LEVEL;
+                    break;
+                case ShopAction::Title:
+                    valid = sCharTitlesStore.LookupEntry(action.Param1) != nullptr;
+                    break;
+                case ShopAction::Reputation:
+                    valid = sFactionStore.LookupEntry(action.Param1) != nullptr;
+                    break;
+                case ShopAction::RealmTransfer:
+                    break;
+                case ShopAction::BoostToken:
+                    if (action.Param1 <= 0)
+                        action.Param1 = 6;
+                    break;
+                default:
+                    valid = false;
+                    break;
+            }
+
+            if (!valid)
+            {
+                TC_LOG_ERROR("sql.sql", "Table `shop_product_action`: product {} has an invalid action {} ({}, {}), skipped.", productId, AsUnderlyingType(action.Action), action.Param1, action.Param2);
+                continue;
+            }
+
+            // items (mailed) and account-wide things can be bought at the character screen too
+            if (action.Action != ShopAction::Item && action.Action != ShopAction::RealmTransfer && action.Action != ShopAction::BoostToken)
+                product->InGameOnly = true;
+            product->Actions.push_back(action);
+        } while (result->NextRow());
+    }
+
+    TC_LOG_INFO("server.loading", ">> Loaded {} shop tabs and {} shop products in {} ms", _shopGroupStore.size(), _shopProductStore.size(), GetMSTimeDiffToNow(oldMSTime));
+}
+
+ShopProduct const* ObjectMgr::GetShopProduct(uint32 id) const
+{
+    return Trinity::Containers::MapGetValuePtr(_shopProductStore, id);
 }
 
 void ObjectMgr::LoadCreatureTemplateModels()
@@ -1186,6 +1360,15 @@ void ObjectMgr::CheckCreatureTemplate(CreatureTemplate const* cInfo)
     {
         TC_LOG_ERROR("sql.sql", "Creature (Entry: {}) has wrong value ({}) in speed_run, set to 1.14286.", cInfo->Entry, cInfo->speed_run);
         const_cast<CreatureTemplate*>(cInfo)->speed_run = 1.14286f;
+    }
+
+    // the scale is the creature's (and its summons', guardians', pets') ObjectScale: 0 draws a zero-sized model (client "Model FileData
+    // ... scale:0" assert) and zeroes its bounding radius and combat reach (VMaNGOS uses 0 for "the display's own scale"; the
+    // creature_template_model DisplayScale already gets the same treatment in LoadCreatureTemplateModels).
+    if (!(cInfo->scale > 0.0f))
+    {
+        TC_LOG_ERROR("sql.sql", "Creature (Entry: {}) has wrong value ({}) in scale, set to 1.", cInfo->Entry, cInfo->scale);
+        const_cast<CreatureTemplate*>(cInfo)->scale = 1.0f;
     }
 
     if (cInfo->type && !sCreatureTypeStore.LookupEntry(cInfo->type))
@@ -4407,8 +4590,9 @@ void ObjectMgr::LoadPlayerInfo()
 
         } while (raceStatsResult->NextRow());
 
-        //                                                  0      1     2    3    4    5    6    7
-        QueryResult result  = WorldDatabase.Query("SELECT class, level, str, agi, sta, inte, spi, basehp FROM player_classlevelstats");
+        //                                                  0      1     2    3    4    5    6    7       8
+        QueryResult result  = WorldDatabase.Query("SELECT class, level, str, agi, sta, inte, spi, basehp, basemana FROM player_classlevelstats");
+        _classicBaseMana.clear();
 
         if (!result)
         {
@@ -4453,6 +4637,10 @@ void ObjectMgr::LoadPlayerInfo()
                     levelInfo.baseHealth = fields[7].GetUInt32();
                 }
             }
+
+            // Classic 1.60 (vanilla, VMaNGOS player_classlevelstats.basemana): 0 keeps the client's game table value
+            if (uint32 classicBaseMana = fields[8].GetUInt32())
+                _classicBaseMana[(current_class << 8) | current_level] = classicBaseMana;
 
             ++count;
         }
@@ -4548,6 +4736,13 @@ void ObjectMgr::GetPlayerClassLevelInfo(uint32 class_, uint8 level, uint32& base
 
     if (level > sWorld->getIntConfig(CONFIG_MAX_PLAYER_LEVEL))
         level = sWorld->getIntConfig(CONFIG_MAX_PLAYER_LEVEL);
+
+    // Classic 1.60 (vanilla): the base mana of the class at this level from VMaNGOS, base health was replaced the same way
+    if (uint32 const* classicBaseMana = Trinity::Containers::MapGetValuePtr(_classicBaseMana, (class_ << 8) | level))
+    {
+        baseMana = *classicBaseMana;
+        return;
+    }
 
     GtBaseMPEntry const* mp = sBaseMPGameTable.GetRow(level);
     if (!mp)

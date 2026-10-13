@@ -115,6 +115,17 @@ else()
   endif()
 endif()
 
+# The advocaite commit the tree is pinned to (UPSTREAM_PIN, see doc/UPSTREAM.md)
+set(upstream_pin "unpinned")
+if(EXISTS "${CMAKE_SOURCE_DIR}/UPSTREAM_PIN")
+  file(STRINGS "${CMAKE_SOURCE_DIR}/UPSTREAM_PIN" upstream_pin_lines REGEX "^commit:[ \t]*[0-9a-f]+")
+  if(upstream_pin_lines)
+    string(REGEX MATCH "[0-9a-f]+[ \t]*$" upstream_pin_full "${upstream_pin_lines}")
+    string(STRIP "${upstream_pin_full}" upstream_pin_full)
+    string(SUBSTRING "${upstream_pin_full}" 0 12 upstream_pin)
+  endif()
+endif()
+
 # For package/copyright information we always need a proper date - keep "Archived/1970" for displaying git info but a valid year elsewhere
 string(REGEX MATCH "([0-9]+)-([0-9]+)-([0-9]+)" rev_date_fallback_match ${rev_date_fallback})
 set(rev_year ${CMAKE_MATCH_1})

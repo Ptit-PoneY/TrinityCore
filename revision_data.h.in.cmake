@@ -23,6 +23,9 @@
 #define TRINITY_GIT_COMMIT_DATE     "@rev_date@"
 #define TRINITY_GIT_COMMIT_BRANCH   R"(@rev_branch@)"
 
+// advocaite commit this tree is pinned to (UPSTREAM_PIN)
+#define FOREVER_UPSTREAM_PIN        "@upstream_pin@"
+
 // Build OS information
 #define TRINITY_BUILD_HOST_SYSTEM                   R"(@TRINITY_BUILD_HOST_SYSTEM@)"
 #define TRINITY_BUILD_HOST_SYSTEM_VERSION           R"(@TRINITY_BUILD_HOST_SYSTEM_RELEASE@)"

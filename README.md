@@ -1,8 +1,8 @@
 # ![logo](https://community.trinitycore.org/public/style_images/1_trinitycore.png) TrinityCore (master)
 
-## This fork: WoW Classic beta 1.60.1.70170 ("Forever")
+## This fork: WoW Classic beta 1.60.1.70338 ("Forever")
 
-Branch `forever` runs TrinityCore master against the **WoW Classic beta client 1.60.1.70170** (`_classic_beta_\WowB.exe`)
+Branch `forever` runs TrinityCore master against the **WoW Classic beta client 1.60.1.70338** (`_classic_beta_\WowB.exe`)
 with a vanilla world (converted from VMaNGOS) and the Skyborne / Zephras Isle content.
 
 **Just want to play?** Use the Windows repack from the releases: extract, run `Setup.bat`, start the servers in the
@@ -61,7 +61,7 @@ Then move `dbc`, `gt`, `maps`, `vmaps` and `mmaps` into the worldserver's `DataD
 - a certificate for `trinity.actual.battle.net` signed by a root CA that the client PC trusts. Create your **own** CA
   (restrict it with `nameConstraints = critical,permitted;DNS:actual.battle.net`) and never share its private key.
   The repack's `setup\Setup.ps1` shows the exact openssl commands.
-- start the client with the [Forever Launcher](https://github.com/advocaite/foreverlauncher), which sets the portal and
+- start the client with the [Forever Launcher](https://github.com/advocaite/foreverlauncher-releases/releases), which sets the portal and
   the server's public key.
 
 [![Average time to resolve an issue](https://isitmaintained.com/badge/resolution/TrinityCore/TrinityCore.svg)](https://isitmaintained.com/project/TrinityCore/TrinityCore "Average time to resolve an issue") [![Percentage of issues still open](https://isitmaintained.com/badge/open/TrinityCore/TrinityCore.svg)](https://isitmaintained.com/project/TrinityCore/TrinityCore "Percentage of issues still open")
@@ -159,3 +159,21 @@ Read file [AUTHORS](AUTHORS).
 * [Wiki](https://www.trinitycore.info)
 * [Forums](https://talk.trinitycore.org/)
 * [Discord](https://discord.trinitycore.org/)
+
+## WoW Forever Bots (optional bot module)
+
+This tree also carries the **WoW Forever Bots** by Karrz: party companions, raid, dungeon and battleground bots, world bots and an auction house bot.
+It is off unless you build with `-DBUILD_PLAYERBOT_V2=1`. How to build, set up and use it: [`BOTS.md`](BOTS.md) and [`INSTALL-BOTS.md`](INSTALL-BOTS.md).
+The not-Blizzlike server options (solo raid entry, no Molten Core runes, no attunements, open Ahn'Qiraj gates, killed raid trash stays dead) are all **0 / off** in
+`worldserver.conf.dist` and are described in [`doc/OptionalServerOptions.md`](doc/OptionalServerOptions.md); `examples/zz-forever-bots.conf` turns them on if you copy it in.
+The original (1.12) spell and creature numbers are not in the repository: [`tools/classic_spell_values/README.md`](tools/classic_spell_values/README.md) builds them from a database dump you download.
+
+### Run it like Karrz's realm
+
+Anyone can build the server Karrz plays on. These are the steps in order; the realm's own PC scripts, logins and certificates are not part of this repository.
+
+1. **Build.** `cmake -S . -B build -DSERVERS=1 -DTOOLS=1 -DSCRIPTS=static -DBUILD_PLAYERBOT_V2=1`, then build `worldserver`, `bnetserver` and the tools. Details: [`INSTALL-BOTS.md`](INSTALL-BOTS.md).
+2. **Vanilla data.** Download the VMaNGOS world dump (`world_full_14_june_2021`) yourself and run `python3 tools/classic_spell_values/build_vanilla_data.py --dump <file>`. It writes the vanilla (1.12) spell, creature and boss numbers as SQL files that the server applies at start. See [`tools/classic_spell_values/README.md`](tools/classic_spell_values/README.md).
+3. **Maps.** Extract the maps, vmaps and mmaps from your own client with the tools built in step 1: `tools/extract_client_data.sh` (Linux) or `tools/extract_client_data.ps1` (Windows) runs `mapextractor`, `vmap4extractor`, `vmap4assembler` and `mmaps_generator` in order. Put the result in `DataDir`. No map files are included, and the map format is the stock TrinityCore one.
+4. **Config.** Create the bot database (`INSTALL-BOTS.md`, step 3), rename `playerbot.conf.dist` to `playerbot.conf` in `worldserver.conf.d`, and copy [`examples/karrz-realm.conf`](examples/karrz-realm.conf) into the same folder. It holds the realm's world bots and 50/50 faction balance, the battleground rules, the raid switches (solo raid entry, saved on entry, trash stays dead, no Molten Core runes, no attunements, open Ahn'Qiraj gates), the auction house bot and the logging. Lower the bot numbers in it on a smaller machine. The first start creates a few thousand roster characters, which takes about two hours.
+5. **Add-on.** Copy `src/modules/PlayerbotV2/Addon/ForeverBots` into `<WoW folder>/_classic_beta_/Interface/AddOns/` (the public repository also has it ready as `ForeverBots-addon.zip`). Type `/fb` in game.
