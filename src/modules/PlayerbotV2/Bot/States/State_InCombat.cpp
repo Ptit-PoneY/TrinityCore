@@ -2646,8 +2646,7 @@ void DispatchInCombat(BotAI& ai,
         }
         Role const sk_role = ai.effective_role(snapshot);
         // A boss fight script picks the target (it already honours the skull): this rule would be a second voice.
-        bool const script_target = snapshot.raw().raid_order.active && snapshot.raw().raid_order.script_owns &&
-            !snapshot.raw().raid_order.script_focus.IsEmpty();
+        bool const script_target = snapshot.raw().raid_order.script_names_target();
         if (!skull.IsEmpty() && snapshot.victim() != skull && sk_role != Role::Tank && sk_role != Role::Healer &&
             !HeldByOwner(ai, snapshot) && !script_target)
             for (auto const& u : snapshot.nearby_enemies())
@@ -2682,8 +2681,7 @@ void DispatchInCombat(BotAI& ai,
         if (kf_po.active && !kf_po.kill_focus.IsEmpty() &&
             snapshot.is_alive() && !snapshot.is_casting() && !on_owner_attack &&
             snapshot.victim() != kf_po.kill_focus &&
-            !(snapshot.raw().raid_order.active && snapshot.raw().raid_order.script_owns &&
-              !snapshot.raw().raid_order.script_focus.IsEmpty()))   // a boss fight script picks the target
+            !snapshot.raw().raid_order.script_names_target())   // a boss fight script picks the target
         {
             for (auto const& u : snapshot.nearby_enemies())
             {
