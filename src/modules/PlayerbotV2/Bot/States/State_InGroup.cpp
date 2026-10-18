@@ -1246,6 +1246,10 @@ void DispatchInGroup(BotAI& ai,
         (ai.pull_back_active() ||
          (ai.is_manual_mode(snapshot.published_at_ms()) && ai.owner_command() == BotAI::OwnerCommand::Engage)) &&
         dist < kDetourMaxRange;
+    // The one answer to "does another layer own this bot's movement right now": the follow, the slot move and the recall all stand
+    // down for it (a rooted bot cannot follow either).
+    bool const movement_owned_elsewhere =
+        in_active_bg || dungeon_run_owns_movement || detour_leased || holding_position || order_owns_movement || snapshot.is_rooted();
     bool const refollow = ai.take_formation_refollow();
     // Owner formation: the bot's goal is its SLOT, recomputed every tick from the owner's live position and facing,
     // not "within the recall slack of the owner" (a slot ring wider than the slack, or any spot inside the ring,
@@ -1258,7 +1262,7 @@ void DispatchInGroup(BotAI& ai,
         auto& ft = ai.formation_track();
         constexpr float kArriveYd = 1.5f, kStartYd = 2.5f, kRetargetYd = 2.0f;
         constexpr uint32 kMinReissueMs = 500, kStuckMs = 3000, kFallbackMs = 8000;
-        bool const gated = in_active_bg || dungeon_run_owns_movement || detour_leased || holding_position || order_owns_movement || snapshot.is_rooted();
+        bool const gated = movement_owned_elsewhere;
         float const slot_dist = DistanceXY(bx, by, slot_x, slot_y);
         bool const moving = snapshot.raw().movement.is_moving;
         // 0 = none, 1 = move, 2 = hold, 3 = fallback
@@ -1337,9 +1341,8 @@ void DispatchInGroup(BotAI& ai,
     else if (!formation_fallback && ai.formation_track().dest_valid)
         ai.formation_track().dest_valid = false;
 
-    if (!formation_slot_active &&
-        !in_active_bg && !dungeon_run_owns_movement && !detour_leased && !holding_position && !order_owns_movement &&
-        (dist > kRecallSlack || (refollow && dist > 1.5f)) && !snapshot.is_rooted())
+    if (!formation_slot_active && !movement_owned_elsewhere &&
+        (dist > kRecallSlack || (refollow && dist > 1.5f)))
     {
         // Follow uses MotionMaster MoveFollow, which silently re-emits forever
         // when the leader is unreachable (across a gap / closed door) — and
