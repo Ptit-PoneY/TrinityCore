@@ -202,6 +202,8 @@ void ConfigReader::apply_from_loaded_config()
     bhv_ranged_slow_          = c.GetBoolDefault("Playerbot.Behavior.RangedSlow", true, true);
     bhv_ike3_commands_        = c.GetBoolDefault("Playerbot.Behavior.Ike3Commands", true, true);
     bhv_owner_commands_       = c.GetBoolDefault("Playerbot.Behavior.OwnerCommands", true, true);
+    bhv_passive_leash_yd_     = std::max(0.0f, float(c.GetFloatDefault("Playerbot.Behavior.PassiveLeashYd", 25.0f, true)));
+    bhv_aggressive_radius_yd_ = std::max(1.0f, float(c.GetFloatDefault("Playerbot.Behavior.AggressiveRadiusYd", 10.0f, true)));
     bhv_fidget_               = c.GetBoolDefault("Playerbot.Behavior.Fidget", true, true);
     addon_hint_enabled_       = c.GetBoolDefault("Playerbot.AddonHint.Enable", false, true);
     addon_hint_delay_sec_     = uint32(std::clamp<int64_t>(c.GetIntDefault("Playerbot.AddonHint.DelaySec", 30, true), 5, 600));

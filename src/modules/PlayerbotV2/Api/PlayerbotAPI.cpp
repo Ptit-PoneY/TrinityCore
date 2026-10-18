@@ -9383,6 +9383,15 @@ uint32 API::learn_riding_free()
     if (!p_ || p_->GetLevel() < 40) return 0;
     uint32 changed = 0;
     uint16 const target = p_->GetLevel() >= 60 ? 150 : 75;
+    // A bot a retail trainer pass raised past its level's tier (Journeyman at 40) goes back to the vanilla tier, tier spells included.
+    if (p_->GetSkillValue(SKILL_RIDING) > target)
+    {
+        p_->SetSkill(SKILL_RIDING, target / 75, target, target);
+        for (uint32 tier_spell : { 33391u, 34090u, 34091u, 90265u })   // Journeyman, Expert, Artisan, Master Riding
+            if (p_->HasSpell(tier_spell) && !(tier_spell == 33391u && target >= 150))
+                p_->RemoveSpell(tier_spell, false, false);
+        ++changed;
+    }
     if (p_->GetSkillValue(SKILL_RIDING) < target)
     {
         if (!p_->HasSkill(SKILL_RIDING))
@@ -9402,17 +9411,111 @@ uint32 API::learn_riding_free()
     uint32 normal = 0, swift = 0;
     if (!RaceMountSpells(p_->GetRace(), normal, swift))
         return changed;
-    uint32 const want = p_->GetLevel() >= 60 ? swift : normal;
-    if (known == want || (known && p_->GetLevel() < 60) || p_->HasSpell(swift))
+    bool const epic = p_->GetLevel() >= 60;
+    uint32 want = epic ? swift : normal;
+    if (known == want || (known && !epic) || p_->HasSpell(swift))
         return changed;
     if (!isMount(sSpellMgr->GetSpellInfo(want, DIFFICULTY_NONE)))
     {
-        TC_LOG_WARN("playerbot.api", "[API::riding] {}: mount spell {} for race {} is not a mount in this data",
-            p_->GetName(), want, uint32(p_->GetRace()));
-        return changed;
+        // The race's table spell is not a mount in this data: take the next mount of the race that is (the other vanilla ground mounts of the race,
+        // then its swift mount at 60).
+        std::vector<uint32> alternatives;
+        switch (p_->GetRace())
+        {
+            case RACE_HUMAN:        alternatives = epic ? std::vector<uint32>{ 23227, 23228 } : std::vector<uint32>{ 472, 6648, 458 }; break;
+            case RACE_ORC:          alternatives = epic ? std::vector<uint32>{ 23251, 23252 } : std::vector<uint32>{ 6653, 6654, 580 }; break;
+            case RACE_DWARF:        alternatives = epic ? std::vector<uint32>{ 23239, 23240 } : std::vector<uint32>{ 6777, 6898, 6899 }; break;
+            case RACE_NIGHTELF:     alternatives = epic ? std::vector<uint32>{ 23219, 23338 } : std::vector<uint32>{ 8394, 10789, 10792, 66847, 10793 }; break;
+            case RACE_UNDEAD_PLAYER: alternatives = epic ? std::vector<uint32>{ 23246, 23247 } : std::vector<uint32>{ 17463, 17464, 17462 }; break;
+            case RACE_TAUREN:       alternatives = epic ? std::vector<uint32>{ 23248, 23249 } : std::vector<uint32>{ 18989, 18991, 18990 }; break;
+            case RACE_GNOME:        alternatives = epic ? std::vector<uint32>{ 23222, 23223 } : std::vector<uint32>{ 17453, 10969, 10873 }; break;
+            case RACE_TROLL:        alternatives = epic ? std::vector<uint32>{ 23242, 23243 } : std::vector<uint32>{ 10796, 10799, 8395 }; break;
+            default: break;
+        }
+        uint32 found = 0;
+        for (uint32 candidate : alternatives)
+            if (candidate != want && isMount(sSpellMgr->GetSpellInfo(candidate, DIFFICULTY_NONE)))
+            {
+                found = candidate;
+                break;
+            }
+        TC_LOG_WARN("playerbot.api", "[API::riding] {}: mount spell {} for race {} is not a mount in this data; {}", p_->GetName(), want,
+            uint32(p_->GetRace()), found ? fmt::format("using {}", found) : std::string("no other mount of the race is either"));
+        if (!found)
+            return changed;
+        want = found;
     }
     p_->LearnSpell(want, false);
+    if (!p_->HasSpell(want))
+    {
+        TC_LOG_WARN("playerbot.api", "[API::riding] {}: learning mount spell {} did not take (race {} class {} level {})", p_->GetName(), want,
+            uint32(p_->GetRace()), uint32(p_->GetClass()), uint32(p_->GetLevel()));
+        return changed;
+    }
     return changed + 1;
+}
+
+uint32 API::reset_to_starter_gear(bool& complete)
+{
+    complete = false;
+    if (!p_) return 0;
+    PlayerInfo const* info = sObjectMgr->GetPlayerInfo(p_->GetRace(), p_->GetClass());
+    if (!info) return 0;
+    // Nothing is taken off before its replacement is known to fit: each starter item goes straight into its equipment slot (the swap check
+    // allows an occupied slot), the old piece in that slot is destroyed just before, and a piece that cannot be worn leaves the old one on.
+    // The slots the outfit does not use are cleared only when every piece went on, so a bot is never left bare.
+    uint32 removed = 0;
+    bool all = true;
+    std::array<bool, EQUIPMENT_SLOT_END> kept{};
+    for (PlayerCreateInfoItem const& initial : info->item)
+    {
+        ItemTemplate const* tpl = sObjectMgr->GetItemTemplate(initial.item_id);
+        if (!tpl || tpl->GetClass() == ITEM_CLASS_CONTAINER)
+            continue;   // the bot's bags stay as they are
+        if (tpl->GetInventoryType() == INVTYPE_NON_EQUIP)
+        {
+            ItemPosCountVec dest;
+            if (!p_->HasItemCount(initial.item_id, 1) && p_->CanStoreNewItem(NULL_BAG, NULL_SLOT, dest, initial.item_id, initial.item_amount) == EQUIP_ERR_OK)
+                p_->StoreNewItem(dest, initial.item_id, true);
+            continue;   // food, drink and the like are a bonus, not part of the outfit
+        }
+        uint16 pos = 0;
+        InventoryResult const res = p_->CanEquipNewItem(NULL_SLOT, pos, initial.item_id, true);
+        uint8 const slot = uint8(pos & 0xFF);
+        if (res != EQUIP_ERR_OK || uint8(pos >> 8) != INVENTORY_SLOT_BAG_0 || slot >= EQUIPMENT_SLOT_END)
+        {
+            all = false;
+            TC_LOG_INFO("playerbot.v2", "[starter_outfit] {} cannot wear starter item {}: result {}", p_->GetName(), initial.item_id, uint32(res));
+            continue;
+        }
+        if (Item* cur = p_->GetItemByPos(INVENTORY_SLOT_BAG_0, slot))
+        {
+            if (cur->GetEntry() == initial.item_id)
+            {
+                kept[slot] = true;
+                continue;
+            }
+            p_->DestroyItem(INVENTORY_SLOT_BAG_0, slot, true);
+            ++removed;
+        }
+        if (p_->EquipNewItem(pos, initial.item_id, info->itemContext, true))
+            kept[slot] = true;
+        else
+        {
+            all = false;
+            TC_LOG_INFO("playerbot.v2", "[starter_outfit] {} could not equip starter item {} in slot {}", p_->GetName(), initial.item_id, uint32(slot));
+        }
+        p_->AutoUnequipOffhandIfNeed();
+    }
+    if (all)
+        for (uint8 slot = EQUIPMENT_SLOT_START; slot < EQUIPMENT_SLOT_END; ++slot)
+            if (!kept[slot] && p_->GetItemByPos(INVENTORY_SLOT_BAG_0, slot))
+            {
+                p_->DestroyItem(INVENTORY_SLOT_BAG_0, slot, true);
+                ++removed;
+            }
+    complete = all;
+    return removed;
 }
 
 Result API::trainer_buy_spell(ObjectGuid trainer_npc, uint32 spell_id)

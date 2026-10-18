@@ -4800,6 +4800,7 @@ public:
         uint32 last_progress_ms = 0;
         uint32 fallback_until_ms = 0;
         uint32 last_log_ms = 0;
+        uint32 last_stuck_log_ms = 0;
         uint8  last_action = 0;
     };
     FormationTrack& formation_track() { return formation_track_; }

@@ -1068,6 +1068,10 @@ public:
     // Classic riding for a bot: Riding skill 75 from level 40 and 150 at 60 (what MountCapability's ReqRidingSkill
     // checks), and its race's vanilla mount (the swift one at 60) when it knows no mount at all. Returns what changed.
     uint32 learn_riding_free();
+    // Puts a bot into the outfit its character was created with (playercreateinfo_item): each piece straight into its slot, the old piece in that
+    // slot destroyed just before; a piece that cannot be worn leaves the old one on. The slots the outfit does not use are cleared only when
+    // every piece went on (`complete`). Returns the number of equipped items removed. For a world bot under level 10 that wears a generated set.
+    uint32 reset_to_starter_gear(bool& complete);
     Result trainer_buy_all_available(ObjectGuid trainer_npc,
                                      uint32* out_learned = nullptr,
                                      uint32* out_already = nullptr,

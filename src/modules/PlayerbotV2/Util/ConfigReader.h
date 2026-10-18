@@ -352,6 +352,10 @@ public:
     bool behavior_ranged_slow()         const { return bhv_ranged_slow_; }
     bool behavior_ike3_commands()       const { return bhv_ike3_commands_; }
     bool behavior_owner_commands()      const { return bhv_owner_commands_; }
+    // Yards from the group's leader: a Passive bot defends a mob only within this of the leader (or of the member it is on), and an
+    // Aggressive one attacks a hostile only within the aggressive radius of the leader. 0 switches the Passive leash off.
+    float behavior_passive_leash_yd()   const { return bhv_passive_leash_yd_; }
+    float behavior_aggressive_radius_yd() const { return bhv_aggressive_radius_yd_; }
     bool behavior_fidget()              const { return bhv_fidget_; }
     // Players who log in without the ForeverBots add-on get one line with its download link.
     bool   addon_hint_enabled()         const { return addon_hint_enabled_; }
@@ -546,6 +550,8 @@ private:
     bool   bhv_ranged_slow_          = true;
     bool   bhv_ike3_commands_        = true;
     bool   bhv_owner_commands_       = true;
+    float  bhv_passive_leash_yd_     = 25.0f;
+    float  bhv_aggressive_radius_yd_ = 10.0f;
     bool   bhv_fidget_               = true;
     bool        addon_hint_enabled_   = false;
     uint32      addon_hint_delay_sec_ = 30;

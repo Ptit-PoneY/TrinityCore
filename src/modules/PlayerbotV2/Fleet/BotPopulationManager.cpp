@@ -1612,7 +1612,9 @@ void BotPopulationManager::FinishCompanionSetup(Player* bot, Player* owner, uint
         if (joinFailure.empty())
         {
             float x, y, z;
-            owner->GetNearPoint(bot, x, y, z, slot_offset.distance, owner->GetOrientation() + slot_offset.angle_radians);
+            // The owner is the searcher: the ground height is read on the OWNER's map. With the bot as searcher a bot standing on another
+            // continent had the owner's x,y looked up on its own map and landed 350 y under the owner (a new character in Coldridge).
+            owner->GetNearPoint(nullptr, x, y, z, slot_offset.distance, owner->GetOrientation() + slot_offset.angle_radians);
             TransferAbortReason const door = Fleet::PrepareInstanceEntry(bot, owner->GetMapId());
             if (door != TRANSFER_ABORT_NONE)
             {
@@ -1688,11 +1690,19 @@ std::string BotPopulationManager::BringToOwner(Player* owner, Player* bot, char 
         if (std::string const joinFailure = JoinOwnerGroup(owner, bot); !joinFailure.empty())
             return refuse(joinFailure);
 
+    // "Come" from a bot that is already close walks: a teleport of a few yards shows to the owner as the bot shooting across the screen. Far away,
+    // on another map or instance, or at another height (a bot under the map, 353 y below the owner) it is teleported as before. "Summon" always is.
+    if (why && std::strncmp(why, "come", 4) == 0 && bot->GetMapId() == owner->GetMapId() && bot->GetInstanceId() == owner->GetInstanceId() &&
+        bot->GetDistance(owner) <= 60.0f && std::fabs(bot->GetPositionZ() - owner->GetPositionZ()) <= 15.0f)
+    {
+        TC_LOG_INFO("playerbot.v2", "[summon] {} is {:.0f}y from {} ({}): walks, no teleport", bot->GetName(), bot->GetDistance(owner), owner->GetName(), why);
+        return {};
+    }
     FormationOffset offset{ 5.0f, 0.0f };
     if (BotAI const* ai = Services::Registry().ai(bot->GetGUID().GetCounter()))
         offset = ComputeFormationOffset(ai->formation_type(), ai->formation_slot(), ai->follow_distance() > 0.f ? ai->follow_distance() : 5.0f);
     float x, y, z;
-    owner->GetNearPoint(bot, x, y, z, offset.distance, owner->GetOrientation() + offset.angle_radians);
+    owner->GetNearPoint(nullptr, x, y, z, offset.distance, owner->GetOrientation() + offset.angle_radians);
     TransferAbortReason const door = Fleet::PrepareInstanceEntry(bot, owner->GetMapId());
     if (door != TRANSFER_ABORT_NONE)
         return refuse(Fleet::TransferAbortName(door));

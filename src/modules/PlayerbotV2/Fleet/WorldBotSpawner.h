@@ -162,6 +162,14 @@ private:
     struct Ghost { Anchor a; uint32 until_ms; };   // where a player was before an instance / far jump: keeps its bots for a grace
     std::vector<Ghost> ghosts_;
     std::unordered_map<uint64, Anchor> prev_anchor_;
+    struct PlaceDest { float x = 0.0f, y = 0.0f; uint32 until_ms = 0; };
+    std::unordered_map<uint64, PlaceDest> place_dest_;   // where a bot sent by PlaceNear is walking to, for a while: the crowd count uses it, not its position on the way
+    // World bots under level 10 made before they stopped being given a generated set (migration 0031): each is stripped to its starter outfit once, on login.
+    std::unordered_set<uint64> gear_reset_pending_, gear_reset_tried_;
+    bool gear_reset_loaded_ = false, gear_reset_inflight_ = false;
+    void LoadGearResetPending();
+    void ResetStarterGearOnce(Player* bot);
+    float last_place_x_ = 0.0f, last_place_y_ = 0.0f, last_place_z_ = 0.0f;   // where the last PlaceNear sent the bot (it lands later)
     float last_place_dist_ = 0.0f;                  // ring distance chosen by the last PlaceNear (the teleport lands later)
     BotPopulationManager& owner_;
     Config cfg_;
@@ -201,6 +209,11 @@ private:
     uint64 n_placed_ = 0;
     uint64 n_despawned_ = 0;
     uint64 n_abandoned_ = 0;
+    // Why PlaceNear's candidate spots were refused (index: 0 no ground, 1 water, 2 no navmesh point, 3 lava, 4 no complete path, 5 area full) and
+    // how many calls found none at all; reported in the [world] line so a placement that never succeeds names its cause.
+    uint64 n_place_reject_[6] = {};
+    uint64 n_place_none_ = 0;
+    uint64 n_place_calls_ = 0;
     struct Seeding { uint32 started_ms = 0; uint32 setup_done_ms = 0; };
     std::unordered_map<uint64, Seeding> seeding_;
     uint32 last_grad_ms_ = 0;

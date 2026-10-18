@@ -34,6 +34,14 @@ constexpr PoolSlot ChoosePoolSlot(PoolBudget const& b, bool isle_resident)
     return b.variable < b.variable_max ? PoolSlot::Variable : PoolSlot::None;
 }
 
+// With a level census the standing roster takes a creation when its (faction, level bracket) is below its share of the bracket cap, whatever
+// the roster total is (a roster that grew past core_max earlier would otherwise send every missing low-level bot to the temporary pool).
+constexpr PoolBudget BalancedBudget(PoolBudget b, bool bracket_has_room)
+{
+    b.core_max = bracket_has_room ? b.core + 1 : 0;
+    return b;
+}
+
 constexpr void PoolCountCreated(PoolBudget& b, PoolSlot slot)
 {
     if (slot == PoolSlot::Core)

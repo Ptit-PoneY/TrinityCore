@@ -1,5 +1,6 @@
 ﻿#include "BotSnapshotBuilder.h"
 #include "BotRegistry.h"
+#include "GroupControl.h"
 #include "Bot/SpellFamily.h"
 #include "ClassicSpec.h"
 #include "BotAI.h"
@@ -1815,6 +1816,8 @@ std::shared_ptr<BotSnapshot const> BotSnapshotBuilder::Build(Player* p, BotAI* b
         else if (mc_ai)
             mc_ai->clear_move_corroborate();
         snap->movement.is_moving = moving;
+        if (!moving && p->GetGroup() && p->GetMap())
+            snap->movement.ground_z = p->GetMap()->GetHeight(p->GetPhaseShift(), p->GetPositionX(), p->GetPositionY(), p->GetPositionZ() + 2.0f, true, 10.0f);
     }
     // UNIT_STATE_IN_FLIGHT — the core is flying the bot on a taxi path. The bot logic
     // must stand down entirely (DispatchIdle bails) so no idle/unstick/watchdog
@@ -3324,9 +3327,36 @@ std::shared_ptr<BotSnapshot const> BotSnapshotBuilder::Build(Player* p, BotAI* b
     {
         snap->group.group_guid = g->GetGUID();
         snap->owner_in_group = !snap->owner_guid.IsEmpty() && g->IsMember(snap->owner_guid);
+        // No owner in this group: a human member still commands the bot (GroupControl.h). A world bot a player invited gets the
+        // companion's duties and obeys the group leader; a bot with only bots around it stays autonomous.
+        if (!snap->owner_in_group && Services::Initialized())
+        {
+            std::vector<GroupControl::Member<ObjectGuid>> members;
+            for (GroupReference const& itr : g->GetMembers())
+            {
+                Player const* m = itr.GetSource();
+                if (!m || m == p) continue;
+                members.push_back({ m->GetGUID(), !(m->GetSession() && m->GetSession()->IsBot()) });
+            }
+            ObjectGuid const controller = GroupControl::ResolveController(g->GetLeaderGUID(), members);
+            if (!controller.IsEmpty())
+            {
+                snap->led_by_player = true;
+                snap->controller_guid = controller;
+                if (Player const* c = ObjectAccessor::FindConnectedPlayer(controller); c && c->GetMapId() == p->GetMapId())
+                    snap->owner_dist = p->GetExactDist2d(c);
+            }
+        }
         if (snap->owner_in_group)
             if (Player const* owner = ObjectAccessor::FindConnectedPlayer(snap->owner_guid); owner && owner->GetMapId() == p->GetMapId())
                 snap->owner_dist = p->GetExactDist2d(owner);
+        if (bot_ai)
+        {
+            snap->holding_position = bot_ai->holding_position(snap->published_at_ms);
+            auto const stance = bot_ai->owner_stance();
+            snap->no_tag_stance = stance == BotAI::OwnerStance::Passive ||
+                                  (stance == BotAI::OwnerStance::Auto && (snap->owner_in_group || snap->led_by_player));
+        }
     }
 
     // ---- Spellbook (sorted, binary-searchable in BotSnapshotView::knows_spell) ----
@@ -7518,7 +7548,7 @@ std::shared_ptr<BotSnapshot const> BotSnapshotBuilder::Build(Player* p, BotAI* b
         const bool truly_stuck =
             snap->quest_discovery.quest_offers.empty() &&
             snap->quest_log.quests.empty();
-        if (truly_stuck && p->GetLevel() < 20)
+        if (truly_stuck && p->GetLevel() < 20 && !snap->owner_in_group && !snap->led_by_player)   // a led bot has no quest autopilot to diagnose
         {
             uint32 giver_npc_count = 0;
             uint32 giver_go_count  = 0;
