@@ -876,14 +876,7 @@ ThreatHold EvaluateThreatHold(BotAI& ai, BotSnapshotView const& s, ObjectGuid ta
 // one is ready (the owner's bots used the same set). Returns true on an emit.
 bool TryThreatDrop(BotSnapshotView const& s, ObjectGuid target, BotIntentEmitter& emit)
 {
-    struct Drop { uint8 cls; uint32 spell; uint32 needs_aura; bool on_target; };
-    static constexpr Drop kDrops[] = {
-        { CLASS_PRIEST, 586,  0,   false },   // Fade
-        { CLASS_HUNTER, 5384, 0,   false },   // Feign Death
-        { CLASS_ROGUE,  1966, 0,   true  },   // Feint
-        { CLASS_DRUID,  8998, 768, true  },   // Cower (Cat Form)
-    };
-    for (Drop const& d : kDrops)
+    for (ThreatDrop const& d : kThreatDrops)   // Bot/ThreatLimits.h: the one table of class threat drops
     {
         if (d.cls != s.cls() || !s.knows_spell(d.spell) || !s.is_ready(d.spell)) continue;
         if (d.needs_aura && !s.has_aura(d.needs_aura)) continue;
