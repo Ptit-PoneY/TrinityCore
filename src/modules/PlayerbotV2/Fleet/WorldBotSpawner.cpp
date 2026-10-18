@@ -813,8 +813,12 @@ void WorldBotSpawner::LoadGearResetPending()
 void WorldBotSpawner::ResetStarterGearOnce(Player* bot)
 {
     uint64 const guid_low = bot->GetGUID().GetCounter();
-    if (!gear_reset_pending_.contains(guid_low) || !gear_reset_tried_.insert(guid_low).second)
-        return;   // not marked, or already tried since the server started (a piece that cannot be worn is not retried every tick)
+    if (!gear_reset_pending_.contains(guid_low) || gear_reset_tried_.contains(guid_low))
+        return;
+    // Armor cannot be put on while casting or fighting (result 40, "can't do that right now"): try again on a later tick.
+    if (bot->IsInCombat() || bot->HasUnitState(UNIT_STATE_CASTING) || bot->IsNonMeleeSpellCast(false))
+        return;
+    gear_reset_tried_.insert(guid_low);   // not marked, or already tried since the server started (a piece that cannot be worn is not retried every tick)
     bool complete = true;
     if (bot->GetLevel() < ::Playerbot::Gear::kWorldGearMinLevel)
     {

@@ -9473,9 +9473,9 @@ uint32 API::reset_to_starter_gear(bool& complete)
     for (PlayerCreateInfoItem const& initial : info->item)
     {
         ItemTemplate const* tpl = sObjectMgr->GetItemTemplate(initial.item_id);
-        if (!tpl || tpl->GetClass() == ITEM_CLASS_CONTAINER)
-            continue;   // the bot's bags stay as they are
-        if (tpl->GetInventoryType() == INVTYPE_NON_EQUIP)
+        if (!tpl || tpl->GetClass() == ITEM_CLASS_CONTAINER || tpl->GetClass() == ITEM_CLASS_QUIVER)
+            continue;   // the bot's bags and quivers stay as they are
+        if (tpl->GetInventoryType() == INVTYPE_NON_EQUIP || tpl->GetClass() == ITEM_CLASS_PROJECTILE)
         {
             ItemPosCountVec dest;
             if (!p_->HasItemCount(initial.item_id, 1) && p_->CanStoreNewItem(NULL_BAG, NULL_SLOT, dest, initial.item_id, initial.item_amount) == EQUIP_ERR_OK)
