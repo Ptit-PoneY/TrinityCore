@@ -579,13 +579,14 @@ public:
         None = 0, Follow, Hold, Stay, Engage, Disengage, Action
     };
 
-    OwnerCommand owner_command() const { return owner_command_; }
-    ObjectGuid   owner_target()  const { return owner_target_; }
-    uint32       manual_mode_until_ms() const { return manual_mode_until_ms_; }
+    OwnerCommand owner_command() const { std::lock_guard<std::mutex> lk(orders_.mtx); return orders_.command; }
+    ObjectGuid   owner_target()  const { std::lock_guard<std::mutex> lk(orders_.mtx); return orders_.target; }
+    uint32       manual_mode_until_ms() const { std::lock_guard<std::mutex> lk(orders_.mtx); return orders_.until_ms; }
     bool         is_manual_mode(uint32 now_ms) const
     {
-        return owner_command_ != OwnerCommand::None &&
-               now_ms < manual_mode_until_ms_;
+        std::lock_guard<std::mutex> lk(orders_.mtx);
+        return orders_.command != OwnerCommand::None &&
+               now_ms < orders_.until_ms;
     }
 
     // Enter manual mode with the given command + target. Pass `ttl_ms`
@@ -594,17 +595,19 @@ public:
     void enter_manual(OwnerCommand cmd, ObjectGuid target,
                       uint32 now_ms, uint32 ttl_ms = 30000)
     {
-        owner_command_         = cmd;
-        owner_target_          = target;
-        manual_mode_until_ms_  = now_ms + (ttl_ms == 0 ? 30000u : ttl_ms);
-        last_owner_command_ms_ = now_ms;
+        std::lock_guard<std::mutex> lk(orders_.mtx);
+        orders_.command  = cmd;
+        orders_.target   = target;
+        orders_.until_ms = now_ms + (ttl_ms == 0 ? 30000u : ttl_ms);
+        orders_.last_ms  = now_ms;
     }
 
     // Owner said stay/hold: the bot keeps its spot and must not be pulled back into a follow.
     bool holding_position(uint32 now_ms) const
     {
-        return is_manual_mode(now_ms) &&
-               (owner_command_ == OwnerCommand::Stay || owner_command_ == OwnerCommand::Hold);
+        std::lock_guard<std::mutex> lk(orders_.mtx);
+        return orders_.command != OwnerCommand::None && now_ms < orders_.until_ms &&
+               (orders_.command == OwnerCommand::Stay || orders_.command == OwnerCommand::Hold);
     }
 
     // Follow-drop commitment (HonorFollowDrop, run at the top of every tick). The owner dropped or jumped to a floor 4+ y below and the
@@ -657,9 +660,10 @@ public:
     // disturb manual mode (they're settings, not movement orders).
     void refresh_manual(uint32 now_ms, uint32 ttl_ms = 30000)
     {
-        if (owner_command_ != OwnerCommand::None)
-            manual_mode_until_ms_ = now_ms + (ttl_ms == 0 ? 30000u : ttl_ms);
-        last_owner_command_ms_ = now_ms;
+        std::lock_guard<std::mutex> lk(orders_.mtx);
+        if (orders_.command != OwnerCommand::None)
+            orders_.until_ms = now_ms + (ttl_ms == 0 ? 30000u : ttl_ms);
+        orders_.last_ms = now_ms;
     }
 
     // Drop manual mode — autonomous rules resume. Also called when the
@@ -667,12 +671,13 @@ public:
     // ttl in is_manual_mode, but a /resume should clear immediately).
     void exit_manual()
     {
-        owner_command_         = OwnerCommand::None;
-        owner_target_          = ObjectGuid::Empty;
-        manual_mode_until_ms_  = 0;
+        std::lock_guard<std::mutex> lk(orders_.mtx);
+        orders_.command  = OwnerCommand::None;
+        orders_.target   = ObjectGuid::Empty;
+        orders_.until_ms = 0;
     }
 
-    uint32     last_owner_command_ms() const { return last_owner_command_ms_; }
+    uint32     last_owner_command_ms() const { std::lock_guard<std::mutex> lk(orders_.mtx); return orders_.last_ms; }
     // The owner's "attack" word reached this bot (whether or not the bot may open on the target): PveGroupCoordinator releases the raid's
     // marks and DPS wait for it. A Pull never sets it. 0 = never.
     void       note_owner_attack(uint32 now_ms) { owner_attack_ms_ = now_ms ? now_ms : 1u; }
@@ -790,9 +795,9 @@ public:
     // run (or follow stop), or engages a mob himself. Unlike the 30s manual-mode window it lasts
     // until released. Written by the chat handlers (world thread), read and released by the bot logic
     // worker. Returns true when the value changed (callers log [owner_order] on change).
-    bool owner_follow_order() const { return owner_follow_order_.load(std::memory_order_relaxed); }
+    bool owner_follow_order() const { return orders_.follow.load(std::memory_order_relaxed); }
     bool set_owner_follow_order(bool on)
-    { return owner_follow_order_.exchange(on, std::memory_order_relaxed) != on; }
+    { return orders_.follow.exchange(on, std::memory_order_relaxed) != on; }
     // A companion's small party (not a raid group) inside a raid map: never advance or pull,
     // follow the owner and defend. Recomputed each tick (update_dungeon_autopilot_hold).
     bool raid_map_party_hold() const { return raid_map_party_hold_; }
@@ -808,17 +813,17 @@ public:
     // Written by the chat handlers (world thread), read by the bot worker.
     enum class OwnerStance : uint8_t { Auto = 0, Passive = 1, Aggressive = 2 };
     static constexpr float kAggressiveRadiusYd = 10.0f;   // Aggressive: hostiles this close to the owner are attacked
-    OwnerStance owner_stance() const { return OwnerStance(owner_stance_.load(std::memory_order_relaxed)); }
-    bool set_owner_stance(OwnerStance st) { return owner_stance_.exchange(uint8_t(st), std::memory_order_relaxed) != uint8_t(st); }
+    OwnerStance owner_stance() const { return OwnerStance(orders_.stance.load(std::memory_order_relaxed)); }
+    bool set_owner_stance(OwnerStance st) { return orders_.stance.exchange(uint8_t(st), std::memory_order_relaxed) != uint8_t(st); }
     bool owner_passive() const { return owner_stance() == OwnerStance::Passive; }
     // The owner's last attack / pull / assist order is fresh (15 s): a passive bot fights during it.
     bool owner_order_window_open() const
     {
         return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() <
-               owner_order_until_.load(std::memory_order_relaxed);
+               orders_.order_until.load(std::memory_order_relaxed);
     }
     // "passive" ends the window an Attack / Pull opened, so the stance holds at once and not after 15 s.
-    void close_owner_order_window() { owner_order_until_.store(0, std::memory_order_relaxed); }
+    void close_owner_order_window() { orders_.order_until.store(0, std::memory_order_relaxed); }
     // Starts no fight on its own right now (stance Passive, or Auto in an instance led by a human), outside an order window.
     bool passive_now(bool human_led_instance) const
     {
@@ -882,9 +887,9 @@ public:
         end_owner_use();
         int64_t const now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count();
-        owner_order_until_.store(now_ms + 15000, std::memory_order_relaxed);
+        orders_.order_until.store(now_ms + 15000, std::memory_order_relaxed);
         if (autopilot_window)
-            human_release_until_.store(now_ms + 15000, std::memory_order_relaxed);
+            orders_.release_until.store(now_ms + 15000, std::memory_order_relaxed);
         return a || b || c;
     }
 
@@ -3403,10 +3408,20 @@ private:
     uint8          last_train_level_ = 0;
     bool           aoe_preference_   = false;
     // Owner-squad-control state (Phase C of OWNER_SQUAD_CONTROL_PLAN.md).
-    OwnerCommand   owner_command_         = OwnerCommand::None;
-    ObjectGuid     owner_target_;
-    uint32         manual_mode_until_ms_  = 0;
-    uint32         last_owner_command_ms_ = 0;
+    // The owner's orders to this bot, all in one place. Written by the chat handlers (world thread), read by the bot worker.
+    struct OwnerOrders
+    {
+        mutable std::mutex mtx;                    // guards command / target / until_ms / last_ms
+        OwnerCommand command  = OwnerCommand::None;   // manual mode (enter_manual): 30 s, or 30 min for stay / hold
+        ObjectGuid   target;
+        uint32       until_ms = 0;
+        uint32       last_ms  = 0;                 // last time any order reached the bot
+        std::atomic<bool>     follow{false};       // owner_follow_order(): lasts until released
+        std::atomic<uint8_t>  stance{0};           // OwnerStance
+        std::atomic<int64_t>  order_until{0};      // steady-clock ms: an order is fresh until then (passive bots assist)
+        std::atomic<int64_t>  release_until{0};    // steady-clock ms: the dungeon autopilot is allowed until then
+    };
+    OwnerOrders    orders_;
     uint32         owner_attack_ms_       = 0;
     uint32         owner_pull_ms_         = 0;
     std::string    last_owner_name_;
@@ -3419,18 +3434,14 @@ private:
     std::atomic<bool>  tactic_save_mana_{false};
     std::atomic<bool>  loot_all_{false};
     DungeonRunMode dungeon_run_mode_      = DungeonRunMode::Off;
-    std::atomic<bool> owner_follow_order_{false};
     std::atomic<uint32_t> follow_drop_until_ms_{0};
     std::atomic<uint32_t> follow_drop_since_ms_{0};
     std::atomic<uint32_t> follow_drop_fine_until_ms_{0};
     std::atomic<uint32_t> follow_drop_block_until_ms_{0};
-    std::atomic<uint8_t> owner_stance_{0};   // OwnerStance
     bool           raid_map_party_hold_   = false;
     bool           owner_hold_            = false;   // an owner Stay / Hold is on: the autopilot walks nobody (update_dungeon_autopilot_hold)
     bool           human_lead_hold_       = false;   // see human_lead_hold()
     uint32         human_seen_ms_         = 0;       // last tick a leading human was in range (0 = never)
-    std::atomic<int64_t> human_release_until_{0};    // steady-clock ms: autopilot allowed until then
-    std::atomic<int64_t> owner_order_until_{0};      // steady-clock ms: an owner order is fresh until then (passive bots assist)
     BgRunMode      bg_run_mode_           = BgRunMode::Off;
     // Edge-tracker for BG entry/exit. Auto-activate fires on the
     // false→true transition of `in_battleground()`, not while the bot
