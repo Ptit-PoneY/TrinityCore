@@ -351,7 +351,8 @@ The module logs nothing unless `Logger.playerbot.v2=3` is set. Grep the server l
 
 ## 14. Known gaps
 
-- `trade`, and the ike3 strategy toggles `co`/`nc`/`ss` (+/- strategy lists), are **not implemented**. The
+- The ike3 strategy toggles `co`/`nc`/`ss` (+/- strategy lists) are **not implemented**. Trade is: the bot takes
+  gifts from its owner or a group mate (see Gifts by trade) and a free world bot buys what you put in. The
   nearest equivalents are `max dps` / `save mana` / `normal`, `aoe`, `hold`/`defensive`/`aggressive`.
 - `sell grey` and `repair` act at once only when the vendor is within interaction reach; from up to 60 yards the
   bot walks over and you repeat the order. There is no standing "go and sell, then come back" order; the bots'
@@ -389,7 +390,7 @@ Level-60 (level-cap) companions are geared for raiding by role (`Playerbot.Behav
 | `Playerbot.Gear.RaidIlvlCap` | 0 | Explicit item level ceiling; above 0 it overrides `MaxTier`. |
 | `Playerbot.Behavior.AcceptOwnerTrade` | 1 | A companion accepts a trade its owner opens, once the owner has accepted (gear and money gifts). The bot never offers anything, so nothing can be taken back through the window. Anyone else's trade is declined. Mail is not read by bots, so gifts go by trade. |
 
-Gifts by trade: open a trade with the bot, put the items in, accept. The bot accepts, then its auto-equip rules wear what is an upgrade for its role (within a few minutes in the open world, at once in a dungeon, or say `equip upgrades`); the rest stays in its bags.
+Gifts by trade: open a trade with the bot, put the items in, accept. Gold, gear that is an upgrade and reagents of a recipe the bot knows are gifts; anything else the bot buys at a fair price. The bot accepts, then its auto-equip rules wear what is an upgrade for its role (within a few minutes in the open world, at once in a dungeon, or say `equip upgrades`); the rest stays in its bags.
 
 | Say or whisper | What the bot does |
 |---|---|
