@@ -27,6 +27,7 @@
 #include "Combat/ApRegistry.h"
 #include "Combat/ApRotation.h"
 #include "Combat/Apl/ApClassicHeal.h"            // ClassicHeal::RankHeal - raid overheal cancel
+#include "Combat/Apl/AplPetThrottle.h"           // one pet_attack order per target per 3 s
 #include "Combat/Apl/ApTankThreat.h"             // TankThreat::TauntReach - [tank_loose] logs the reach the Taunt rule uses
 #include "SpellInfo.h"
 #include "SpellMgr.h"
@@ -3725,10 +3726,16 @@ void DispatchInCombat(BotAI& ai,
     // zero behavioral gain. pet_victim() lags by one snapshot (~250ms) after
     // the pet switches, so at most 1-2 duplicate emits slip through per
     // target change.
+    // This is the only pet_attack site (the warlock / hunter rotation rules are gone): a new victim is ordered at once, the same
+    // one again after 3 s (AplPetThrottle.h), so a pet that cannot take the order does not flood the queue.
     if (snapshot.has_pet() && !snapshot.victim().IsEmpty() &&
         snapshot.pet_victim() != snapshot.victim() &&
-        !ThreatHoldActive(ai, snapshot, snapshot.victim(), &group))   // threat discipline: no pet on a held mob
+        !ThreatHoldActive(ai, snapshot, snapshot.victim(), &group) &&   // threat discipline: no pet on a held mob
+        Playerbot::AplPet::PetAttackDue(snapshot.raw().guid.GetCounter(), snapshot.victim(), snapshot.published_at_ms()))
+    {
+        Playerbot::AplPet::NotePetAttack(snapshot.raw().guid.GetCounter(), snapshot.victim(), snapshot.published_at_ms());
         emit.pet_attack(snapshot.victim());
+    }
 
     // Battle-rez: cast a class-appropriate combat-castable rez on the first
     // dead group member. Spells:
