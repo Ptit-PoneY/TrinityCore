@@ -2,6 +2,7 @@
 
 #include "Fleet/LevelWindow.h"
 #include "Api/PlayerbotAPI.h"
+#include "Bot/QuestDoable.h"
 #include "Bot/Gear/WorldGearStart.h"
 #include "Fleet/WorldLeash.h"
 #include "Fleet/CityLayer.h"
@@ -593,6 +594,10 @@ bool WorldBotSpawner::PlaceNear(Player* bot, Player* anchor)
         {
             if (h.mapId != anchor->GetMapId()) return;
             if (in_town && h.zoneId != anchor->GetZoneId()) return;   // a city's crowd stays in the city, not in the hubs of the countryside around it
+            // Outside a city a bot stands at a hub to take its quests. A hub where this bot can take none (the chain starts are done, the quests are
+            // above its level or another class's) only parks it at the quest giver with nothing to do, and a valley's one hub then holds the whole crowd
+            // (Coldridge camp, 2026-10-18): the bot gets a ring spot among the mobs instead, where it grinds.
+            if (!in_town && !::Playerbot::HubHasDoableQuest(bot, h)) return;
             float const d = Dist2D(h.location.GetPositionX(), h.location.GetPositionY(), ax, ay);
             if (d >= min_d && d <= cfg_.activity_radius * 0.9f)
             {

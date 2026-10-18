@@ -1551,8 +1551,11 @@ Result API::move_to(float x, float y, float z, bool run, bool direct, bool drop,
             !Playerbot::BotMovement::NoMotionAllows(g_no_motion[p_->GetGUID().GetCounter()], move_goal_key,
                                                     p_->GetPositionX(), p_->GetPositionY(), GameTime::GetGameTimeMS()))
         {
-            TC_LOG_INFO("playerbot.v2", "[move_abandon] {} asked for ({:.0f},{:.0f},{:.0f}) for over 30 s without moving; goal dropped",
-                p_->GetName(), x, y, z);
+            TC_LOG_INFO("playerbot.v2", "[move_abandon] {} asked for ({:.0f},{:.0f},{:.0f}) for over 30 s without moving; goal dropped "
+                "(at {:.0f},{:.0f},{:.0f} motion={} casting={} sitting={} rooted={} stunned={} combat={} path_fail_recent={})",
+                p_->GetName(), x, y, z, p_->GetPositionX(), p_->GetPositionY(), p_->GetPositionZ(), int(p_->GetMotionMaster()->GetCurrentMovementGeneratorType()),
+                p_->HasUnitState(UNIT_STATE_CASTING), p_->GetStandState() != UNIT_STAND_STATE_STAND, p_->HasUnitState(UNIT_STATE_ROOT),
+                p_->HasUnitState(UNIT_STATE_STUNNED), p_->IsInCombat(), PathFailedRecently(p_, PathDestKey(p_->GetMapId(), x, y), GameTime::GetGameTimeMS()));
             NotePathFail(p_, PathDestKey(p_->GetMapId(), x, y), GameTime::GetGameTimeMS(), kPathFailTtlLongMs);
             return Result::Locked;
         }
