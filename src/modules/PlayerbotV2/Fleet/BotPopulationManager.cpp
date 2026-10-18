@@ -1612,8 +1612,16 @@ void BotPopulationManager::FinishCompanionSetup(Player* bot, Player* owner, uint
         {
             float x, y, z;
             owner->GetNearPoint(bot, x, y, z, slot_offset.distance, owner->GetOrientation() + slot_offset.angle_radians);
-            Fleet::PrepareInstanceEntry(bot, owner->GetMapId());
-            ::Playerbot::BotMovement::SafeTeleport(bot, owner->GetMapId(), x, y, z, owner->GetOrientation(), 0);
+            TransferAbortReason const door = Fleet::PrepareInstanceEntry(bot, owner->GetMapId());
+            if (door != TRANSFER_ABORT_NONE)
+            {
+                // The door refuses it (the instance holds its most players, another raid's save...): it stays outside, alive, and the
+                // rejoin rule asks again; the owner is told why instead of finding a bot missing.
+                TC_LOG_INFO("playerbot.v2", "[summon] {} stays outside map {}: {}", bot->GetName(), owner->GetMapId(), Fleet::TransferAbortName(door));
+                ChatHandler(owner->GetSession()).PSendSysMessage("%s cannot enter yet: %s.", bot->GetName().c_str(), Fleet::TransferAbortName(door));
+            }
+            else
+                ::Playerbot::BotMovement::SafeTeleport(bot, owner->GetMapId(), x, y, z, owner->GetOrientation(), 0);
             // A level 10+ hunter's pet, once ever. Mid map change it is not in the world yet: CompanionUpkeep grants it then.
             GrantCompanionStarterPet(id, bot);
 
@@ -1632,6 +1640,57 @@ void BotPopulationManager::FinishCompanionSetup(Player* bot, Player* owner, uint
     else
         ChatHandler(owner->GetSession()).PSendSysMessage("%s is level %u but not in your group: %s.", bot->GetName().c_str(),
                                                           uint32(bot->GetLevel()), joinFailure.c_str());
+}
+
+// The one way an owner's order brings a companion to them ("come", "summon", `.bot summon <name|all>`, the add-on's Come button), in
+// the open world or inside an instance, wherever the bot is: a bot dead on another map is revived as a summon does, one outside
+// the group is put in it first (the door checks look at the group's instance), the door is checked and every refusal is logged and
+// returned in words, so no bot goes missing without a reason. Empty string = it is on its way.
+std::string BotPopulationManager::BringToOwner(Player* owner, Player* bot, char const* why)
+{
+    auto refuse = [&](std::string reason)
+    {
+        TC_LOG_INFO("playerbot.v2", "[summon] {} not brought to {} ({}): {}", bot->GetName(), owner->GetName(), why, reason);
+        return reason;
+    };
+    if (!owner || !bot || !owner->IsInWorld() || !bot->IsInWorld())
+        return refuse("not in the world");
+    if (!bot->IsAlive())
+    {
+        if (bot->GetMapId() == owner->GetMapId())
+            return refuse("dead where you are: it waits for a rez");
+        TC_LOG_INFO("playerbot.v2", "[summon] {} dead on map {}: revived to join {}", bot->GetName(), bot->GetMapId(), owner->GetName());
+        bot->ResurrectPlayer(1.0f);
+        bot->SpawnCorpseBones();
+    }
+    if (bot->IsInCombat())
+        return refuse("in combat");
+    if (bot->IsBeingTeleported())
+        return refuse("already on its way");
+    Map const* ownerMap = owner->GetMap();
+    if (ownerMap && ownerMap->IsBattlegroundOrArena())
+        return refuse("you are in a battleground");
+
+    bool const alreadyGrouped = owner->GetGroup() && bot->GetGroup() == owner->GetGroup();
+    std::string capFull;
+    if (!alreadyGrouped && CompanionSpawnFull(owner, bot->GetGUID().GetCounter(), capFull))
+        return refuse(capFull);
+    if (!alreadyGrouped)
+        if (std::string const joinFailure = JoinOwnerGroup(owner, bot); !joinFailure.empty())
+            return refuse(joinFailure);
+
+    FormationOffset offset{ 5.0f, 0.0f };
+    if (BotAI const* ai = Services::Registry().ai(bot->GetGUID().GetCounter()))
+        offset = ComputeFormationOffset(ai->formation_type(), ai->formation_slot(), ai->follow_distance() > 0.f ? ai->follow_distance() : 5.0f);
+    float x, y, z;
+    owner->GetNearPoint(bot, x, y, z, offset.distance, owner->GetOrientation() + offset.angle_radians);
+    TransferAbortReason const door = Fleet::PrepareInstanceEntry(bot, owner->GetMapId());
+    if (door != TRANSFER_ABORT_NONE)
+        return refuse(Fleet::TransferAbortName(door));
+    if (!::Playerbot::BotMovement::SafeTeleport(bot, owner->GetMapId(), x, y, z, owner->GetOrientation(), 0))
+        return refuse("the teleport was refused");
+    TC_LOG_INFO("playerbot.v2", "[summon] {} brought to {} on map {} ({})", bot->GetName(), owner->GetName(), owner->GetMapId(), why);
+    return {};
 }
 
 bool BotPopulationManager::RegearNow(Player* p)
@@ -3043,7 +3102,7 @@ bool BotPopulationManager::LoginExisting(uint64 char_guid_low, bool alliance)
     return false;
 }
 
-uint64 BotPopulationManager::SpawnNew(uint8 level, bool alliance, uint8 race_hint)
+uint64 BotPopulationManager::SpawnNew(uint8 level, bool alliance, uint8 race_hint, bool own_budget)
 {
     uint32& budget = alliance ? spawn_budget_alli_ : spawn_budget_horde_;
     if (!budget) return 0;
@@ -3060,7 +3119,7 @@ uint64 BotPopulationManager::SpawnNew(uint8 level, bool alliance, uint8 race_hin
     // or characters are explicitly deleted.
     auto& cfg = Services::Config();
     const uint32 total_target = cfg.population_total_target();
-    if (total_target > 0)
+    if (total_target > 0 && !own_budget)
     {
         // Owner-bound companions (`.bot add`) are marked bots too, but they
         // ride on top of TotalTarget (see PopulateActual) and never return
@@ -3335,9 +3394,29 @@ uint64 BotPopulationManager::SpawnAmbientBot(uint8 level, bool alliance, uint8 r
     uint32& budget = alliance ? spawn_budget_alli_ : spawn_budget_horde_;
     uint32 const saved = budget;
     budget = 1;
-    uint64 const guid = SpawnNew(level, alliance, race);
+    uint64 const guid = SpawnNew(level, alliance, race, /*own_budget*/ true);
     budget = saved;
     return guid;
+}
+
+bool BotPopulationManager::RetireVariableBot(uint64 guid_low, uint32 account, std::string const& name)
+{
+    ObjectGuid const guid = ObjectGuid::Create<HighGuid::Player>(guid_low);
+    // Never a bot that is in the world, a player's companion or in a group, whatever the row said.
+    if (ObjectAccessor::FindConnectedPlayer(guid) || Services::Owners().GetOwner(guid_low).account_id != 0)
+        return false;
+    if (Services::Registry().has(guid_low))
+    {
+        Services::Scheduler().unregister_bot(guid_low);
+        Services::Snapshots().remove(guid_low);
+        Services::Registry().unregister_bot(guid_low);
+    }
+    BotNamePool::Release(name);
+    Services::Lifecycle().unmark_as_bot(guid_low);
+    forget_pipeline_caches(guid_low);
+    Player::DeleteFromDB(guid, account, /*updateRealmChars*/ true, /*deleteFinally*/ true);
+    Services::Accounts().note_character_removed(account);
+    return true;
 }
 
 bool BotPopulationManager::GraduateSkyborne(Player* bot)

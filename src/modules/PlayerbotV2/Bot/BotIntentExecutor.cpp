@@ -220,7 +220,7 @@ struct IntentVisitor
         return r;
     }
     Result operator()(GroundTargetSpellIntent const& i) { return api.cast_spell_at_position(i.spell_id, i.x, i.y, i.z); }
-    Result operator()(MoveToIntent const& i)           { return api.move_to(i.x, i.y, i.z, i.run, i.direct, i.drop); }
+    Result operator()(MoveToIntent const& i)           { return api.move_to(i.x, i.y, i.z, i.run, i.direct, i.drop, i.follow_drop); }
     Result operator()(TeleportToIntent const& i)       { return api.teleport_to(i.map_id, i.x, i.y, i.z, i.o); }
     Result operator()(StopMovementIntent const& i)     { return api.stop_movement(i.clear_generators); }
     Result operator()(JumpIntent const& i)             { return api.jump(i.forward); }
@@ -708,6 +708,10 @@ size_t V2::Module::DrainIntents()
             try
             {
                 Result r = std::visit(IntentVisitor{api, entry.ai.get()}, intent.body);
+                // A full instance is not a failed port to retry at once: the rejoin rule waits and asks again.
+                if (r == Result::ServerRefused && api.last_instance_full_map() != 0 && entry.ai)
+                    entry.ai->note_instance_full(api.last_instance_full_map(), GameTime::GetGameTimeMS());
+                api.clear_instance_full_map();
                 Services::Perf().record_intent_executed();
                 Services::Perf().record_intent_result(static_cast<size_t>(r));
                 if (r != Result::Ok)

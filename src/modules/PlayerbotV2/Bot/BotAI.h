@@ -8,6 +8,7 @@
 
 #include "IdleWatch.h"
 #include "WalkOrder.h"
+#include "Travel/ReachMemory.h"
 #include "BotTypes.h"
 #include "BotSnapshot.h"  // CurrencyEntry — cached_currencies_ member needs full type
 #include "Battleground/BgTactics.h"          // BgTactics::StallWatch (bg_stall_ member)
@@ -271,6 +272,13 @@ public:
         uint32 direct_tries = 0;
         static constexpr uint32 kDirectTries = 3;
     };
+    // The instance map a companion was last refused for being full, and when: the rejoin rule holds still for kInstanceFullHoldMs
+    // and asks again (idle:rejoin_instance_full), instead of walking to an entrance it cannot use.
+    void     note_instance_full(uint32 map_id, uint32 now_ms) { instance_full_map_ = map_id; instance_full_ms_ = now_ms ? now_ms : 1u; }
+    uint32   instance_full_map() const { return instance_full_map_; }
+    uint32   instance_full_ms()  const { return instance_full_ms_; }
+    void     clear_instance_full() { instance_full_map_ = 0; instance_full_ms_ = 0; }
+    static constexpr uint32 kInstanceFullHoldMs = 30000u;
     RejoinRun&       rejoin_run()       { return rejoin_run_; }
     RejoinRun const& rejoin_run() const { return rejoin_run_; }
     // The release order is not among these (see release_order_ms above).
@@ -1969,7 +1977,9 @@ public:
         if (quest_id == 0) return false;
         std::lock_guard<std::mutex> lk(quest_mem_mtx_);
         auto const it = quest_blacklist_until_ms_.find(quest_id);
-        if (it == quest_blacklist_until_ms_.end()) return false;
+        if (it == quest_blacklist_until_ms_.end())
+            // Not this bot's own drop: other bots may have given up on the walk to its goal (Travel/ReachMemory.h).
+            return ::Playerbot::V2::Travel::QuestGoalMemory::Instance().KnownUnreachable(quest_id, now_ms);
         return now_ms < it->second;
     }
     // Drop expired entries. Called periodically from State_Idle (every ~5min)
@@ -2905,6 +2915,7 @@ public:
         bag_recovery_free_seen_ = 255;
         bag_recovery_backoff_until_ms_ = 0;   // futile episode over (bags cleared)
         capital_run_futile_until_ms_ = 0;     // and any capital-run suppression
+        bag_hearth_used_ = false;             // and the one hearth this episode may take
     }
     // Capital-bag-run futility. When the in-city walk to the banker/AH/vendor
     // cluster proves UNREACHABLE (ChunkedWalkToward gives up after its strike
@@ -2913,6 +2924,9 @@ public:
     // bags) instead of looping the unreachable walk above the quest funnel forever
     // (live 2026-06-22: Durnan/Velruun pinned in Stormwind, 200+ path_fail on the
     // same 55y path ending 6.5y short). Retries after the cooldown.
+    // One hearthstone ride to the bound town per full-bag episode (idle:bag_hearth): a bot far from any vendor goes where the vendors are.
+    bool   bag_hearth_used() const { return bag_hearth_used_; }
+    void   set_bag_hearth_used() { bag_hearth_used_ = true; }
     bool   capital_run_in_futility(uint32 now_ms) const
     { return capital_run_futile_until_ms_ != 0 && now_ms < capital_run_futile_until_ms_; }
     void   capital_run_note_futile(uint32 now_ms)
@@ -4806,6 +4820,7 @@ private:
     uint32 crit_repair_backoff_until_ms_  = 0;  // suppress critical_repair until this time (too poor)
     // bag-recovery futility backoff — see bag_recovery_note_and_check_futile() above.
     uint32 bag_recovery_backoff_until_ms_ = 0;  // suppress bags_full_recover until this time
+    bool   bag_hearth_used_               = false;
     uint32 capital_run_futile_until_ms_   = 0;  // suppress capital_bag_run after an unreachable-city give-up
     RpgState rpg_;                              // RpgRules: town NPC visits + city / AH trips
     uint32 bag_recovery_first_ms_         = 0;  // first tick of the current no-progress window (0 = none)
@@ -5372,6 +5387,8 @@ private:
     std::atomic<uint32> release_order_ms_{0};
     std::atomic<uint32> died_at_ms_{0};
     RejoinRun      rejoin_run_;
+    uint32         instance_full_map_ = 0;
+    uint32         instance_full_ms_ = 0;
     uint32         death_log_ms_ = 0;
     bool           wipe_logged_ = false;
     uint32         owner_wait_since_ms_ = 0;

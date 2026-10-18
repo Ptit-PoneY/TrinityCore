@@ -878,8 +878,8 @@ static bool BeyondHealerLeash(BotSnapshot const& s, float x, float y)
 // A loose mob nobody was assigned goes to ONE tank: the nearest idle one that this bot's friend sweep shows (a tank busy with a
 // mob of its own is no contender; ties go to the lower guid). Without it every tank without an assignment ran at the same mob and
 // they taunted it back and forth (MC 2026-10-11: [tank_loose] from several tanks on one Firewalker, "claimed by another tank 0").
-// The nearer tank counts only while it can take the mob: within the pickup reach (n24 mc_garr: an idle tank 40 y off was the "nearest", every
-// other idle tank deferred to it and a Firesworn stood 7 y from Mctankwb on a healer for a minute).
+// The nearer tank counts only while it can take the mob: within the pickup reach (an idle tank 40 y off was the "nearest", every
+// other idle tank deferred to it and a Firesworn stood 7 y from a tank on a healer for a minute).
 static constexpr float kOtherTankReachYd = 30.0f;
 
 static bool OtherTankTakesLoose(BotSnapshot const& s, NearbyUnit const& mob)

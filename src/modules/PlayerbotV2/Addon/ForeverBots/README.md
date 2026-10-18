@@ -97,7 +97,8 @@ where the client offers `Menu.ModifyMenu` (untested here); the legacy UnitPopupM
 The window stays where you put it and stays open (it is not closed by Escape, clicks, combat or target changes; its open state survives /reload and relog). `/fb` toggles it, or use the X button.
 
 `/fb fallback`, `/fb pullback`, `/fb rally`, `/fb formation circle|arrow|line|none`, `/fb spacing tight|close|spread`, `/fb distance <1-20>` and `/fb maintank [name]` and `/fb tank <name> <marker>|clear` work without the window.
-The `.bot` commands need a GM account (gm level 3 on the realm).
+The `.bot` commands for your own bots (add, call, dismiss, save, list, regear and the rest) work for every account; no GM account is needed. Only `.bot world`, `.bot bgstress`, `.bot bgsoak` and `.bot itemstats` are GM.
 
 Key bindings (0.2.2): Esc > Options > Key Bindings > AddOns > "WoW Forever Bots". Unbound by default; one entry each for Attack, Pull, Pull back, Follow, Stay, Resume, Stop attacking, Flee, Come, Fall back, Toggle stance and Show / hide the bot window. The order keys send the same line as the window buttons and work in combat.
+
 Attack (mouseover) key: hover a mob and press it; the mob becomes your target and the bots attack it. Group pings (the ping wheel, if your client has one): an Attack ping on an enemy sends the bots in, an On my way ping on the ground sends them there. Needs a server with the ping hooks.

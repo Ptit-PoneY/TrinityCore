@@ -21,6 +21,7 @@
 #include "Log.h"
 #include "Config.h"
 #include "GameTime.h"
+#include "Fleet/CityLayer.h"
 #include <unordered_map>
 
 #include "DetourCommon.h"
@@ -265,6 +266,31 @@ float GroundZ(Player* p, float x, float y, float zHint, char const* where, bool*
         }
     }
     return g;
+}
+
+bool ProbeGround(Player* p, float x, float y, float zHint, float& out)
+{
+    if (!p)
+        return false;
+    Map* m = p->GetMap();
+    if (!m)
+        return false;
+    constexpr float kProbeUp   = 3.0f;
+    constexpr float kProbeDown = 40.0f;
+    m->LoadGrid(x, y);
+    float g = INVALID_HEIGHT;
+    try
+    {
+        g = m->GetHeight(p->GetPhaseShift(), x, y, zHint + kProbeUp, /*vmap*/ true, kProbeUp + kProbeDown);
+    }
+    catch (...)
+    {
+        g = INVALID_HEIGHT;   // BIH churn race (see SnapToGround)
+    }
+    if (g <= INVALID_HEIGHT)
+        return false;
+    out = g;
+    return true;
 }
 
 // ---- NearestNavPoint --------------------------------------------------------
@@ -699,6 +725,32 @@ LiquidVerdict ClassifyDestinationLiquid(Player* p, float x, float y, float z,
     // ABOVE_WATER / WATER_WALK / IN_WATER / OCEAN_FLOOR: the bot's head stays
     // above the surface — wading depth, allowed (PathGenerator wades through).
     return LiquidVerdict::Wadeable;
+}
+
+// ---- NoPath storm ------------------------------------------------------------
+
+namespace {
+std::unordered_map<uint64, ::Playerbot::V2::Fleet::NoPathRun> g_noPathRun;
+}
+
+void NoteNoPath(Player const* p)
+{
+    if (p)
+        ::Playerbot::V2::Fleet::NoteNoPath(g_noPathRun[p->GetGUID().GetCounter()], GameTime::GetGameTimeMS());
+}
+
+bool NoPathStorm(Player const* p)
+{
+    if (!p)
+        return false;
+    auto it = g_noPathRun.find(p->GetGUID().GetCounter());
+    return it != g_noPathRun.end() && ::Playerbot::V2::Fleet::NoPathStorm(it->second, GameTime::GetGameTimeMS());
+}
+
+void ClearNoPath(Player const* p)
+{
+    if (p)
+        g_noPathRun.erase(p->GetGUID().GetCounter());
 }
 
 } // namespace Playerbot::BotMovement

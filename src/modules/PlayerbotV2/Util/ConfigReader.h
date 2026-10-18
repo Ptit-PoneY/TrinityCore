@@ -497,7 +497,7 @@ private:
     bool   raid_provide_consumables_     = false;
     bool   consumables_pve_              = true;
     bool   consumables_pvp_              = false;
-    uint32 raid_dps_wait_timeout_ms_     = 10000;
+    uint32 raid_dps_wait_timeout_ms_     = 8000;
     bool   threat_hold_open_world_       = false;
     float  threat_max_ratio_             = 0.9f;
     float  threat_opening_lead_boss_     = 900.0f;
@@ -530,8 +530,8 @@ private:
     bool   bhv_bot_whisperable_      = true;
     bool   chatter_conversation_     = true;
     bool   bhv_world_bot_say_reply_  = true;
-    bool   bhv_instance_group_cap_   = false;
-    uint32 bhv_open_world_group_cap_ = 5;
+    bool   bhv_instance_group_cap_   = true;
+    uint32 bhv_open_world_group_cap_ = 40;
     bool   bhv_bg_human_priority_    = true;
     bool   bhv_tank_markers_         = true;
     bool   bhv_mark_cc_              = true;
