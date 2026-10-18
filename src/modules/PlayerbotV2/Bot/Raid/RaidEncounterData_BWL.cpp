@@ -29,6 +29,9 @@ namespace Playerbot::Raid {
         // Phase 2: Conflagration 23023 is cast on himself every 15-25s (classic_boss_razorgore.cpp:345-349) and disorients whoever stands
         // in melee, the tank included: a tank without it takes him over.
         r.tankSwap.push_back({ 12435, 23023, 1 });
+        // Conflagration is a cone: vanilla data gives 23023 the front-cone target (24) with a 30 yd radius, so everybody but the tank
+        // stays out of the sector in front of him (the tank takes it and hands him over, above).
+        r.avoidFrontal.push_back({ 12435, 30.0f, 50.0f, Who::NonTank });
         // War Stomp 24375 (classic_boss_razorgore.cpp:49), the same stun as the Wyrmguard's below: casters and healers keep 18 yards
         // (in phase 1 that also keeps them off the possessed Razorgore).
         r.avoidEnemy.push_back({ 12435, 18.0f, Who::Ranged });
@@ -101,6 +104,8 @@ namespace Playerbot::Raid {
         // Immune behind Nefarius Barrier 22663 (boss_victor_nefarius.cpp:44,321) and rooted: never target him.
         // Two drakonid types (random pair) spawn every 6-7s, a Chromatic Drakonid pair every 35s, until 40 are dead (:373-443).
         r.priority.push_back({ 10162, -1 });                                      // barrier immunity in phase 1 (boss_victor_nefarius.cpp:44)
+        // Shadow Command 22667 charms the second on his threat list for 15 s (details: scripts-bwl): sheep or stun, never kill.
+        r.controlledMember.push_back({ 22667 });
         r.priority.push_back({ 14302, 6 });                                       // Chromatic Drakonid (24k hp) (boss_victor_nefarius.cpp:394)
         r.priority.push_back({ 14263, 5 });                                       // Bronze Drakonid (boss_victor_nefarius.cpp:58)
         r.priority.push_back({ 14261, 5 });                                       // Blue Drakonid (:59)
@@ -112,6 +117,9 @@ namespace Playerbot::Raid {
         // Shadow Flame 22539 cone, Bellowing Roar 22686 fear, Veil of Shadow 22687 on the tank, Tail Lash 23364, class calls every 25-35s
         // (boss_nefarian.cpp:348-368), at 20% he raises every dead drakonid as a Bone Construct (:371-376, summon spell 23363 on drakonid death).
         r.priority.push_back({ 11583, 3 });                                       // the boss must beat the constructs (boss_nefarian.cpp:371-376)
+        // Bone Constructs (phase 3): 6k hp each, up to 42. Every second caster clears them with area
+        // damage (first matching row wins, so this one comes first); everybody else stays on Nefarian while the tanks hold them.
+        r.priority.push_back({ 14605, 8, Who::AoeShare });
         r.priority.push_back({ 14605, 0 });                                       // Bone Construct: up to 40 of them, 6k hp each; tanks hold them, DPS burn Nefarian (DB 14605)
         r.priority.push_back({ 14668, 6 });                                       // Corrupted Infernal (warlock call: 2 per warlock, stun+damage) (boss_nefarian.cpp:63,609-624)
         // Corrupted totems (shaman call, boss_nefarian.cpp:398-557): 200-2000 hp, root themselves, give Nefarian/drakonids Windfury, Stoneskin,
@@ -121,9 +129,9 @@ namespace Playerbot::Raid {
         r.priority.push_back({ 14663, 5 });                                       // Corrupted Stoneskin Totem VI (boss_nefarian.cpp:437)
         r.priority.push_back({ 14664, 4 });                                       // Corrupted Healing Stream Totem V (boss_nefarian.cpp:440)
         // Fire Nova totem 14662 removes itself after one cast (boss_nefarian.cpp:527-533): no rule.
-        // Class-call debuffs on bots: Wild Polymorph 23603 (mage call, boss_nefarian.cpp:58,726). UNVERIFIED dispel kind.
-        r.dispel.push_back({ 23603, DispelKind::Magic });                         // Nefarian Polymorph (boss_nefarian.cpp:58) UNVERIFIED kind
-        r.dispel.push_back({ 22687, DispelKind::Curse });                         // Veil of Shadow on the tank, -healing (boss_nefarian.cpp:41,324) UNVERIFIED kind
+        // Class-call debuffs on bots: Wild Polymorph 23603 (mage call, boss_nefarian.cpp:58,726). Dispel kinds from the vanilla data.
+        r.dispel.push_back({ 23603, DispelKind::Magic });                         // Nefarian Polymorph (boss_nefarian.cpp:58), magic
+        r.dispel.push_back({ 22687, DispelKind::Curse });                         // Veil of Shadow on the tank, -healing (boss_nefarian.cpp:41,324), curse
         // Priest call: Corrupted Healing 23401 is put on every priest (classic_boss_nefarian.cpp HandleClassCall, AddAura) and turns
         // their heals into damage over time on the target: healing priests stop until it fades (dispels still run).
         r.holdByAura.push_back({ 23401, Who::Healer });

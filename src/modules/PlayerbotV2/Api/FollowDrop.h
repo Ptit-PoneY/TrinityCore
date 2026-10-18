@@ -43,7 +43,7 @@ namespace Playerbot::FollowDrop
         bool  leap = false;     // the crossing is a Leap (level jump over a gap), otherwise a Drop
     };
 
-    constexpr float kMaxOwnerDistXY = 40.0f;   // the drop move refuses landings farther than this
+    constexpr float kMaxOwnerDistXY = 50.0f;   // how far from the owner a bot still looks for a ledge
     constexpr float kMaxRay         = 30.0f;   // how far the bot looks for an edge along a bearing
     constexpr float kRayStep        = 1.0f;
     constexpr float kLedgeDrop      = 3.0f;    // ground this much lower than the last step is an edge
@@ -72,7 +72,12 @@ namespace Playerbot::FollowDrop
         constexpr float kPi = 3.14159265358979f;
         constexpr float kDeg = kPi / 180.0f;
         float const base = std::atan2(ody, odx);
-        float const offsets[] = { 0.f, 25.f * kDeg, -25.f * kDeg, 50.f * kDeg, -50.f * kDeg, 80.f * kDeg, -80.f * kDeg };
+        float offsets[15];
+        {
+            int n = 0;
+            offsets[n++] = 0.f;
+            for (int k = 1; k <= 7; ++k) { offsets[n++] = float(k) * 15.f * kDeg; offsets[n++] = -float(k) * 15.f * kDeg; }
+        }
         float const landing_d[] = { 2.f, 3.f, 4.f, 5.f, 6.f, 8.f, 10.f, 12.f, 15.f };
         float best_cost = 1e9f;
 
