@@ -43,11 +43,12 @@ with a builder script that is not part of this branch. Without them the bots and
    Your database user needs rights on the new `playerbot` database
    (`GRANT ALL ON playerbot.* TO '<your db user>'@'%';`). The server reads and writes it with the
    same login as your other databases. The files do not drop anything.
-4. **Settings.** In `worldserver.conf.d`, rename `playerbot.conf.dist` to `playerbot.conf`, and copy
-   `examples\zz-forever-bots.conf` into the same folder. That file is optional and turns on
-   extras that are **not** Blizzlike: solo raid entry and saving on entry (`Instance.IgnoreRaid`, `Instance.BindOnEntry`), killed raid trash staying dead (`Instance.PersistRaidTrash`),
-   no Molten Core runes, no attunements, open Ahn'Qiraj gates (see `doc/OptionalServerOptions.md`), the
-   auction house bot, faster raid casting, and world bots (stage A, 300 bots, `Playerbot.World.*`).
+4. **Settings.** The build puts `zz-forever-bots.conf` into `worldserver.conf.d` (an existing copy is never overwritten).
+   It turns on the world bots (300 bots, 60 per player), the auction house bot, bot raid tactics and bot logging, so they work
+   without further setup. The raid and instance shortcuts that are not Blizzlike (solo raid entry, no attunements, no Molten Core runes,
+   open Ahn'Qiraj gates; see `doc/OptionalServerOptions.md`) are in that file but commented out; remove the `#` to use them.
+   Optionally rename `playerbot.conf.dist` to `playerbot.conf` to change other bot settings (every key is documented there).
+   `examples\zz-forever-bots.conf` is the same file with the shortcuts switched on and faster raid casting; copy it over to use that.
    Change a value and restart to tune; set `Playerbot.World.Enable = 0` for no roaming bots,
    `AuctionHouseBot.Seller.Enabled = 0` for no auction bot. Weak PC: set `Playerbot.World.MaxBots = 100`
    and `Playerbot.World.GlobalFill = 0`. Expect 4-6 GB of extra RAM at 300 bots.
