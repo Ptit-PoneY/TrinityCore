@@ -27,6 +27,7 @@
 #include "Combat/ApRegistry.h"
 #include "Combat/ApRotation.h"
 #include "Combat/Apl/ApClassicHeal.h"            // ClassicHeal::RankHeal - raid overheal cancel
+#include "Combat/Apl/AplPetThrottle.h"           // one pet_attack order per target per 3 s
 #include "Combat/Apl/ApTankThreat.h"             // TankThreat::TauntReach - [tank_loose] logs the reach the Taunt rule uses
 #include "SpellInfo.h"
 #include "SpellMgr.h"
@@ -875,14 +876,7 @@ ThreatHold EvaluateThreatHold(BotAI& ai, BotSnapshotView const& s, ObjectGuid ta
 // one is ready (the owner's bots used the same set). Returns true on an emit.
 bool TryThreatDrop(BotSnapshotView const& s, ObjectGuid target, BotIntentEmitter& emit)
 {
-    struct Drop { uint8 cls; uint32 spell; uint32 needs_aura; bool on_target; };
-    static constexpr Drop kDrops[] = {
-        { CLASS_PRIEST, 586,  0,   false },   // Fade
-        { CLASS_HUNTER, 5384, 0,   false },   // Feign Death
-        { CLASS_ROGUE,  1966, 0,   true  },   // Feint
-        { CLASS_DRUID,  8998, 768, true  },   // Cower (Cat Form)
-    };
-    for (Drop const& d : kDrops)
+    for (ThreatDrop const& d : kThreatDrops)   // Bot/ThreatLimits.h: the one table of class threat drops
     {
         if (d.cls != s.cls() || !s.knows_spell(d.spell) || !s.is_ready(d.spell)) continue;
         if (d.needs_aura && !s.has_aura(d.needs_aura)) continue;
@@ -2645,8 +2639,7 @@ void DispatchInCombat(BotAI& ai,
         }
         Role const sk_role = ai.effective_role(snapshot);
         // A boss fight script picks the target (it already honours the skull): this rule would be a second voice.
-        bool const script_target = snapshot.raw().raid_order.active && snapshot.raw().raid_order.script_owns &&
-            !snapshot.raw().raid_order.script_focus.IsEmpty();
+        bool const script_target = snapshot.raw().raid_order.script_names_target();
         if (!skull.IsEmpty() && snapshot.victim() != skull && sk_role != Role::Tank && sk_role != Role::Healer &&
             !HeldByOwner(ai, snapshot) && !script_target)
             for (auto const& u : snapshot.nearby_enemies())
@@ -2681,8 +2674,7 @@ void DispatchInCombat(BotAI& ai,
         if (kf_po.active && !kf_po.kill_focus.IsEmpty() &&
             snapshot.is_alive() && !snapshot.is_casting() && !on_owner_attack &&
             snapshot.victim() != kf_po.kill_focus &&
-            !(snapshot.raw().raid_order.active && snapshot.raw().raid_order.script_owns &&
-              !snapshot.raw().raid_order.script_focus.IsEmpty()))   // a boss fight script picks the target
+            !snapshot.raw().raid_order.script_names_target())   // a boss fight script picks the target
         {
             for (auto const& u : snapshot.nearby_enemies())
             {
@@ -3725,10 +3717,16 @@ void DispatchInCombat(BotAI& ai,
     // zero behavioral gain. pet_victim() lags by one snapshot (~250ms) after
     // the pet switches, so at most 1-2 duplicate emits slip through per
     // target change.
+    // This is the only pet_attack site (the warlock / hunter rotation rules are gone): a new victim is ordered at once, the same
+    // one again after 3 s (AplPetThrottle.h), so a pet that cannot take the order does not flood the queue.
     if (snapshot.has_pet() && !snapshot.victim().IsEmpty() &&
         snapshot.pet_victim() != snapshot.victim() &&
-        !ThreatHoldActive(ai, snapshot, snapshot.victim(), &group))   // threat discipline: no pet on a held mob
+        !ThreatHoldActive(ai, snapshot, snapshot.victim(), &group) &&   // threat discipline: no pet on a held mob
+        Playerbot::AplPet::PetAttackDue(snapshot.raw().guid.GetCounter(), snapshot.victim(), snapshot.published_at_ms()))
+    {
+        Playerbot::AplPet::NotePetAttack(snapshot.raw().guid.GetCounter(), snapshot.victim(), snapshot.published_at_ms());
         emit.pet_attack(snapshot.victim());
+    }
 
     // Battle-rez: cast a class-appropriate combat-castable rez on the first
     // dead group member. Spells:

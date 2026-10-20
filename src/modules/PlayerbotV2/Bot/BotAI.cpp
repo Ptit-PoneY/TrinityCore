@@ -696,7 +696,7 @@ void BotAI::update_dungeon_autopilot_hold(BotSnapshotView s, GroupSnapshotView g
             bool const present = human_seen_ms_ != 0 && now_ms - human_seen_ms_ < 30000u;
             int64_t const steady = std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now().time_since_epoch()).count();
-            lead_hold = present && steady >= human_release_until_.load(std::memory_order_relaxed);
+            lead_hold = present && steady >= orders_.release_until.load(std::memory_order_relaxed);
         }
         else
             human_seen_ms_ = 0;
