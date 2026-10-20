@@ -1551,8 +1551,11 @@ Result API::move_to(float x, float y, float z, bool run, bool direct, bool drop,
             !Playerbot::BotMovement::NoMotionAllows(g_no_motion[p_->GetGUID().GetCounter()], move_goal_key,
                                                     p_->GetPositionX(), p_->GetPositionY(), GameTime::GetGameTimeMS()))
         {
-            TC_LOG_INFO("playerbot.v2", "[move_abandon] {} asked for ({:.0f},{:.0f},{:.0f}) for over 30 s without moving; goal dropped",
-                p_->GetName(), x, y, z);
+            TC_LOG_INFO("playerbot.v2", "[move_abandon] {} asked for ({:.0f},{:.0f},{:.0f}) for over 30 s without moving; goal dropped "
+                "(at {:.0f},{:.0f},{:.0f} motion={} casting={} sitting={} rooted={} stunned={} combat={} path_fail_recent={})",
+                p_->GetName(), x, y, z, p_->GetPositionX(), p_->GetPositionY(), p_->GetPositionZ(), int(p_->GetMotionMaster()->GetCurrentMovementGeneratorType()),
+                p_->HasUnitState(UNIT_STATE_CASTING), p_->GetStandState() != UNIT_STAND_STATE_STAND, p_->HasUnitState(UNIT_STATE_ROOT),
+                p_->HasUnitState(UNIT_STATE_STUNNED), p_->IsInCombat(), PathFailedRecently(p_, PathDestKey(p_->GetMapId(), x, y), GameTime::GetGameTimeMS()));
             NotePathFail(p_, PathDestKey(p_->GetMapId(), x, y), GameTime::GetGameTimeMS(), kPathFailTtlLongMs);
             return Result::Locked;
         }
@@ -9470,9 +9473,9 @@ uint32 API::reset_to_starter_gear(bool& complete)
     for (PlayerCreateInfoItem const& initial : info->item)
     {
         ItemTemplate const* tpl = sObjectMgr->GetItemTemplate(initial.item_id);
-        if (!tpl || tpl->GetClass() == ITEM_CLASS_CONTAINER)
-            continue;   // the bot's bags stay as they are
-        if (tpl->GetInventoryType() == INVTYPE_NON_EQUIP)
+        if (!tpl || tpl->GetClass() == ITEM_CLASS_CONTAINER || tpl->GetClass() == ITEM_CLASS_QUIVER)
+            continue;   // the bot's bags and quivers stay as they are
+        if (tpl->GetInventoryType() == INVTYPE_NON_EQUIP || tpl->GetClass() == ITEM_CLASS_PROJECTILE)
         {
             ItemPosCountVec dest;
             if (!p_->HasItemCount(initial.item_id, 1) && p_->CanStoreNewItem(NULL_BAG, NULL_SLOT, dest, initial.item_id, initial.item_amount) == EQUIP_ERR_OK)

@@ -2,6 +2,7 @@
 
 #include "Fleet/LevelWindow.h"
 #include "Api/PlayerbotAPI.h"
+#include "Bot/QuestDoable.h"
 #include "Bot/Gear/WorldGearStart.h"
 #include "Fleet/WorldLeash.h"
 #include "Fleet/CityLayer.h"
@@ -593,6 +594,10 @@ bool WorldBotSpawner::PlaceNear(Player* bot, Player* anchor)
         {
             if (h.mapId != anchor->GetMapId()) return;
             if (in_town && h.zoneId != anchor->GetZoneId()) return;   // a city's crowd stays in the city, not in the hubs of the countryside around it
+            // Outside a city a bot stands at a hub to take its quests. A hub where this bot can take none (the chain starts are done, the quests are
+            // above its level or another class's) only parks it at the quest giver with nothing to do, and a valley's one hub then holds the whole crowd
+            // (Coldridge camp, 2026-10-18): the bot gets a ring spot among the mobs instead, where it grinds.
+            if (!in_town && !::Playerbot::HubHasDoableQuest(bot, h)) return;
             float const d = Dist2D(h.location.GetPositionX(), h.location.GetPositionY(), ax, ay);
             if (d >= min_d && d <= cfg_.activity_radius * 0.9f)
             {
@@ -808,8 +813,12 @@ void WorldBotSpawner::LoadGearResetPending()
 void WorldBotSpawner::ResetStarterGearOnce(Player* bot)
 {
     uint64 const guid_low = bot->GetGUID().GetCounter();
-    if (!gear_reset_pending_.contains(guid_low) || !gear_reset_tried_.insert(guid_low).second)
-        return;   // not marked, or already tried since the server started (a piece that cannot be worn is not retried every tick)
+    if (!gear_reset_pending_.contains(guid_low) || gear_reset_tried_.contains(guid_low))
+        return;
+    // Armor cannot be put on while casting or fighting (result 40, "can't do that right now"): try again on a later tick.
+    if (bot->IsInCombat() || bot->HasUnitState(UNIT_STATE_CASTING) || bot->IsNonMeleeSpellCast(false))
+        return;
+    gear_reset_tried_.insert(guid_low);   // not marked, or already tried since the server started (a piece that cannot be worn is not retried every tick)
     bool complete = true;
     if (bot->GetLevel() < ::Playerbot::Gear::kWorldGearMinLevel)
     {
